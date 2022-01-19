@@ -1,0 +1,267 @@
+#!/usr/bin/env python
+
+#
+# Copyright (C) 2022  Vates SAS
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+
+from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
+from io import BytesIO
+import argparse
+import errno
+import fcntl
+import os
+import socket
+import stat
+import struct
+import time
+
+BLKGETSIZE64 = 0x80081272
+
+REQ_LIMIT_SIZE = 1024 * 1024 * 16  # In bytes
+
+DRBD_MAJOR = 147
+
+DRBD_OPEN_ATTEMPTS = 100
+DRBD_OPEN_SLEEP_INTERVAL = 100
+
+# ==============================================================================
+
+
+def is_drbd_device(path):
+    try:
+        st = os.stat(path)
+    except Exception as e:
+        print('Failed to execute `stat` call on `{}`: {}.'.format(path, e))
+        return False
+    return stat.S_ISBLK(st.st_mode) and os.major(st.st_rdev) == DRBD_MAJOR
+
+
+def open_device(dev_path):
+    def cannot_open(e):
+        raise Exception('Cannot open device `{}`: `{}`.'.format(dev_path, e))
+
+    attempt = 0
+    is_drbd = None
+    while True:
+        try:
+            # Note: Can't use O_DIRECT widh DRBD diskless volumes.
+            return os.open(dev_path, os.O_RDWR)
+        except OSError as e:
+            if e.errno == errno.EAGAIN or e.errno == errno.EINTR:
+                continue
+            if e.errno != errno.EROFS:
+                cannot_open(e)
+
+            if is_drbd is None:
+                is_drbd = is_drbd_device(dev_path)
+            if not is_drbd:
+                cannot_open(e)
+            if attempt >= DRBD_OPEN_ATTEMPTS:
+                raise Exception('Cannot open DRBD device `{}`: `{}`.'.format(dev_path, e))
+
+            attempt += 1
+            time.sleep(DRBD_OPEN_SLEEP_INTERVAL)
+
+
+def close_device(fd):
+    if not fd:
+        return
+
+    while True:
+        try:
+            os.close(fd)
+            return
+        except OSError as e:
+            if e.errno == errno.EBADF:
+                return
+            if e.errno == errno.EINTR:
+                continue
+            print('Cannot close fd {}: `{}`'.format(fd, e))
+            return
+
+
+def get_device_size(fd):
+    disk_capacity = -1
+    while True:
+        try:
+            buf = fcntl.ioctl(fd, BLKGETSIZE64, b' ' * 8)
+            disk_capacity = struct.unpack('L', buf)[0]
+            break
+        except OSError as e:
+            if e.errno != errno.EINTR:
+                print('Cannot get device size: `{}`'.format(e))
+                break
+    return disk_capacity
+
+
+def MakeRequestHandler(disk, disk_capacity):
+    class RequestHandler(BaseHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            # Note: We cannot use this call in python 2:
+            # super(RequestHandler, self).__init__(*args, **kwargs)
+            # > TypeError: must be type, not classobj
+            #
+            # The base class of `BaseHTTPRequestHandler` uses an old def:
+            # "class BaseRequestHandler:"
+            self.disk = disk
+            self.disk_capacity = disk_capacity  # TODO: Detect capacity update?
+            BaseHTTPRequestHandler.__init__(self, *args, **kwargs)
+
+        def parse_range(self):
+            req_range = self.headers.get('range')
+            if req_range is None:
+                self.send_response(400)
+                self.end_headers()
+                return
+
+            if req_range.startswith('bytes'):
+                req_range = req_range[5:].strip()
+                if req_range.startswith('='):
+                    try:
+                        values = req_range[1:].lstrip().split('-')
+                        begin = int(values[0])
+                        end = int(values[1])
+                        if begin <= end and end - begin < self.disk_capacity:
+                            return [begin, end - begin + 1]
+                    except Exception:
+                        pass
+
+            # Return error: "Range Not Satisfiable".
+            self.send_response(416)
+            self.end_headers()
+
+        def parse_content_range(self):
+            req_range = self.headers.get('Content-Range')
+            if req_range is None:
+                self.send_response(400)
+                self.end_headers()
+                return
+
+            if req_range.startswith('bytes'):
+                req_range = req_range[5:].strip()
+                try:
+                    values = req_range.split('-')
+                    begin = int(values[0])
+                    end = int(values[1].split('/')[0].strip())
+                    if begin <= end and end - begin < self.disk_capacity:
+                        return [begin, end - begin + 1]
+                except Exception:
+                    pass
+
+            # Return error: "Range Not Satisfiable".
+            self.send_response(416)
+            self.end_headers()
+
+        def do_HEAD(self):
+            self.send_response(200)
+            self.send_header('Accept-Ranges', 'bytes')
+            self.send_header('Content-Length', str(self.disk_capacity))
+            self.end_headers()
+
+        def do_GET(self):
+            req_range = self.parse_range()
+            if not req_range:
+                return
+
+            offset = req_range[0]
+            size = min(req_range[1], REQ_LIMIT_SIZE)
+
+            try:
+                dev = open_device(self.disk)
+                os.lseek(dev, offset, os.SEEK_SET)
+                chunk = os.read(dev, size)
+            except Exception as e:
+                print('Can\'t do GET: `{}`.'.format(e))
+                self.send_response(500)
+                self.end_headers()
+                return
+            finally:
+                if dev:
+                    os.close(dev)
+
+            self.send_response(206)
+            self.send_header('Content-Range', 'bytes {}-{}/{}'.format(offset, size - 1, self.disk_capacity))
+            self.send_header('Content-Length', str(int(size)))
+            self.end_headers()
+
+            self.wfile.write(chunk)
+
+        def do_PUT(self):
+            req_range = self.parse_content_range()
+            if not req_range:
+                return
+
+            offset = req_range[0]
+            size = req_range[1]
+
+            try:
+                chunk = self.rfile.read(size)
+                dev = open_device(self.disk)
+                os.lseek(dev, offset, os.SEEK_SET)
+                os.write(dev, chunk)
+            except Exception as e:
+                print('Can\'t do PUT: `{}`.'.format(e))
+                self.send_response(500)
+                self.end_headers()
+                return
+            finally:
+                if dev:
+                    os.close(dev)
+
+            self.send_response(200)
+            self.end_headers()
+            response = BytesIO()
+            response.write(b'Ok.')
+            self.wfile.write(response.getvalue())
+
+    return RequestHandler
+
+
+def run_server(disk, disk_capacity, port):
+    HandlerClass = MakeRequestHandler(disk, disk_capacity)
+    httpd = HTTPServer((socket.gethostname(), port), HandlerClass)
+    httpd.serve_forever()
+
+# ==============================================================================
+
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        '--disk', action='store', dest='disk', default=None, required=True,
+        help='Device to share'
+    )
+    parser.add_argument(
+        '--port', action='store', dest='port', type=int, default=8000, required=False,
+        help='Port to use'
+    )
+
+    args = parser.parse_args()
+
+    # Ensure we can open the device and get size.
+    dev = None
+    try:
+        dev = open_device(args.disk)
+        disk_capacity = get_device_size(dev)
+    finally:
+        close_device(dev)
+
+    if dev and disk_capacity > 0:
+        run_server(args.disk, disk_capacity, args.port)
+
+
+if __name__ == '__main__':
+    main()

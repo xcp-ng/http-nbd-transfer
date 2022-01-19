@@ -1,0 +1,15 @@
+name: Check code compilation
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install dependencies
+      run: |
+        sudo apt-get -y install nbdkit-plugin-dev libcurl4-openssl-dev
+    - name: Build multi-http-plugin
+      run: |
+        make
