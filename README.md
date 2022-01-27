@@ -11,7 +11,8 @@ Set of tools to transfer NBD requests to a HTTP server:
 - `gcc` & `make` to build sources
 - `curl` devel C lib
 - `nbdkit` devel C lib
-
+- `nbd` to use `nbd-client` binary
+-
 ## Build
 
 Run `make` command directly in the root project directory.

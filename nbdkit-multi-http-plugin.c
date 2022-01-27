@@ -30,6 +30,8 @@
 
 #define UNUSED(X) (void)X;
 
+#define BROKEN_PIPE_RETRY_COUNT 30
+
 // -----------------------------------------------------------------------------
 // Config & handle.
 // -----------------------------------------------------------------------------
@@ -237,12 +239,19 @@ static ReqError check_req_perform (Handle *handle, CURLcode code) {
     } \
   } while (false)
 
+static void decr_url_id (Handle *handle) {
+  handle->currentUrlId = (handle->currentUrlId + (int)Config.urlArraySize - 1) % (int)Config.urlArraySize;
+}
+
 static void inc_url_id (Handle *handle) {
   handle->currentUrlId = (handle->currentUrlId + 1) % (int)Config.urlArraySize;
 }
 
-static int auto_select_server_until_id (Handle *handle, int limitUrlId) {
-  size_t serverCount = Config.urlArraySize;
+static int select_server (Handle *handle, int limitUrlId, int serverCount) {
+  const int maxServerCount = (int)Config.urlArraySize;
+  if (serverCount <= 0 || serverCount > maxServerCount)
+    serverCount = maxServerCount;
+
   double deviceSize = 0.0;
 
   if (handle->curl)
@@ -351,8 +360,17 @@ err:
   return -1;
 }
 
+static inline int reconnect_current_server (Handle *handle) {
+  decr_url_id(handle);
+  return select_server(handle, -1, 1);
+}
+
+static inline int auto_select_server_until_id (Handle *handle, int limitUrlId) {
+  return select_server(handle, limitUrlId, -1);
+}
+
 static inline int auto_select_server (Handle *handle) {
-  return auto_select_server_until_id(handle, -1);
+  return select_server(handle, -1, -1);
 }
 
 // -----------------------------------------------------------------------------
@@ -450,12 +468,8 @@ static void *cb_open (int readonly) {
 
   handle->readonly = readonly;
   handle->currentUrlId = -1;
-  if (auto_select_server(handle) >= 0)
-    return handle;
-
-  curl_easy_cleanup(handle->curl);
-  free(handle);
-  return NULL;
+  auto_select_server(handle);
+  return handle;
 }
 
 static void cb_close (void *userData) {
@@ -494,7 +508,7 @@ static int cb_pread (void *userData, void *buf, uint32_t count, uint64_t offset,
   const int firstUrlId = handle->currentUrlId;
   assert(firstUrlId >= 0);
 
-  for (;;) {
+  for (int retryCount = BROKEN_PIPE_RETRY_COUNT; ; ) {
     handle->writeBuf = buf;
     handle->writeCount = count;
 
@@ -504,6 +518,14 @@ static int cb_pread (void *userData, void *buf, uint32_t count, uint64_t offset,
       if (!handle->writeCount)
         return 0;
       nbdkit_error("Incomplete read request, retry on another server.");
+    }
+
+    if (result == ReqErrorReadWrite && retryCount > 0) {
+      --retryCount;
+      nbdkit_error("Failed to read, maybe a connection reset. Retrying...");
+      if (reconnect_current_server(handle) >= 0)
+        continue;
+      nbdkit_error("Failed to reconnect with current server.");
     }
 
     nbdkit_error("Failed to read, trying another server...");
@@ -534,7 +556,7 @@ static int cb_pwrite (void *userData, const void *buf, uint32_t count, uint64_t 
   const int firstUrlId = handle->currentUrlId;
   assert(firstUrlId >= 0);
 
-  for (;;) {
+  for (int retryCount = BROKEN_PIPE_RETRY_COUNT; ; ) {
     handle->readBuf = buf;
     handle->readCount = count;
 
@@ -544,6 +566,14 @@ static int cb_pwrite (void *userData, const void *buf, uint32_t count, uint64_t 
       if (!handle->readCount)
         return 0;
       nbdkit_error("Incomplete write request, retry on another server.");
+    }
+
+    if (result == ReqErrorReadWrite && retryCount > 0) {
+      --retryCount;
+      nbdkit_error("Failed to write, maybe a connection reset. Retrying...");
+      if (reconnect_current_server(handle) >= 0)
+        continue;
+      nbdkit_error("Failed to reconnect with current server.");
     }
 
     nbdkit_error("Failed to write, trying another server...");

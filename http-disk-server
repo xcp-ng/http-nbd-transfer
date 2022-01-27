@@ -29,7 +29,7 @@ import time
 
 BLKGETSIZE64 = 0x80081272
 
-REQ_LIMIT_SIZE = 1024 * 1024 * 16  # In bytes
+REQ_LIMIT_SIZE = 1024 * 1024 * 128  # In bytes
 
 DRBD_MAJOR = 147
 
@@ -38,7 +38,6 @@ DRBD_OPEN_SLEEP_INTERVAL = 100
 
 # ==============================================================================
 
-
 def is_drbd_device(path):
     try:
         st = os.stat(path)
@@ -46,7 +45,6 @@ def is_drbd_device(path):
         print('Failed to execute `stat` call on `{}`: {}.'.format(path, e))
         return False
     return stat.S_ISBLK(st.st_mode) and os.major(st.st_rdev) == DRBD_MAJOR
-
 
 def open_device(dev_path):
     def cannot_open(e):
@@ -74,7 +72,6 @@ def open_device(dev_path):
             attempt += 1
             time.sleep(DRBD_OPEN_SLEEP_INTERVAL)
 
-
 def close_device(fd):
     if not fd:
         return
@@ -88,23 +85,28 @@ def close_device(fd):
                 return
             if e.errno == errno.EINTR:
                 continue
-            print('Cannot close fd {}: `{}`'.format(fd, e))
+            print('Cannot close fd {}: `{}`.'.format(fd, e))
             return
-
 
 def get_device_size(fd):
     disk_capacity = -1
     while True:
         try:
-            buf = fcntl.ioctl(fd, BLKGETSIZE64, b' ' * 8)
-            disk_capacity = struct.unpack('L', buf)[0]
+            fd_stat = os.fstat(fd)
+            if stat.S_ISBLK(fd_stat.st_mode):
+                buf = fcntl.ioctl(fd, BLKGETSIZE64, b' ' * 8)
+                disk_capacity = struct.unpack('L', buf)[0]
+            else:
+                disk_capacity = fd_stat.st_size
             break
         except OSError as e:
             if e.errno != errno.EINTR:
-                print('Cannot get device size: `{}`'.format(e))
-                break
+                print('Can\'t get device size: `{}`.'.format(e))
+                raise
+        except Exception as e:
+            print('Can\'t get device size (generic): `{}`.'.format(e))
+            raise
     return disk_capacity
-
 
 def MakeRequestHandler(disk, disk_capacity):
     class RequestHandler(BaseHTTPRequestHandler):
@@ -118,6 +120,16 @@ def MakeRequestHandler(disk, disk_capacity):
             self.disk = disk
             self.disk_capacity = disk_capacity  # TODO: Detect capacity update?
             BaseHTTPRequestHandler.__init__(self, *args, **kwargs)
+
+        # See: https://stackoverflow.com/questions/6063416/python-basehttpserver-how-do-i-catch-trap-broken-pipe-errors#answer-14355079
+        def finish(self):
+            try:
+                if not self.wfile.closed:
+                    self.wfile.flush()
+                    self.wfile.close()
+            except socket.error:
+                pass
+            self.rfile.close()
 
         def parse_range(self):
             req_range = self.headers.get('range')
@@ -178,8 +190,10 @@ def MakeRequestHandler(disk, disk_capacity):
             offset = req_range[0]
             size = min(req_range[1], REQ_LIMIT_SIZE)
 
+            dev = None
             try:
                 dev = open_device(self.disk)
+                print('GET: Read {}B at {}.'.format(size, offset))
                 os.lseek(dev, offset, os.SEEK_SET)
                 chunk = os.read(dev, size)
             except Exception as e:
@@ -188,8 +202,7 @@ def MakeRequestHandler(disk, disk_capacity):
                 self.end_headers()
                 return
             finally:
-                if dev:
-                    os.close(dev)
+                close_device(dev)
 
             self.send_response(206)
             self.send_header('Content-Range', 'bytes {}-{}/{}'.format(offset, size - 1, self.disk_capacity))
@@ -206,9 +219,11 @@ def MakeRequestHandler(disk, disk_capacity):
             offset = req_range[0]
             size = req_range[1]
 
+            dev = None
             try:
                 chunk = self.rfile.read(size)
                 dev = open_device(self.disk)
+                print('PUT: Write {}B at {}.'.format(len(chunk), offset))
                 os.lseek(dev, offset, os.SEEK_SET)
                 os.write(dev, chunk)
             except Exception as e:
@@ -217,8 +232,7 @@ def MakeRequestHandler(disk, disk_capacity):
                 self.end_headers()
                 return
             finally:
-                if dev:
-                    os.close(dev)
+                close_device(dev)
 
             self.send_response(200)
             self.end_headers()
@@ -228,14 +242,19 @@ def MakeRequestHandler(disk, disk_capacity):
 
     return RequestHandler
 
-
 def run_server(disk, disk_capacity, port):
     HandlerClass = MakeRequestHandler(disk, disk_capacity)
     httpd = HTTPServer((socket.gethostname(), port), HandlerClass)
-    httpd.serve_forever()
+
+    run = True
+    while run:
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            run = False
+    httpd.server_close()
 
 # ==============================================================================
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -260,8 +279,10 @@ def main():
         close_device(dev)
 
     if dev and disk_capacity > 0:
-        run_server(args.disk, disk_capacity, args.port)
-
+        try:
+            run_server(args.disk, disk_capacity, args.port)
+        except Exception as e:
+            print('Unhandled exception: `{}`.'.format(e))
 
 if __name__ == '__main__':
     main()
