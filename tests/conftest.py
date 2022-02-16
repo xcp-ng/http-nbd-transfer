@@ -110,7 +110,7 @@ def start_nbd_server(volume_name):
         if nbd_path is None:
             raise Exception('NBD path is empty!')
     except Exception:
-        os.killpg(os.getpgid(nbd_server.pid), signal.SIGTERM)
+        kill_server(nbd_server)
         raise
 
     print('Used NBD path: `{}`.'.format(nbd_path))

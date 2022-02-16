@@ -36,6 +36,11 @@ class CommandException(Exception):
         self.reason = reason
         Exception.__init__(self, os.strerror(abs(code)))
 
+    def __str__(self):
+        return 'Command exception: `{}` (code: `{}`, reason: `{}`)'.format(
+            self.cmd, self.code, self.reason
+        )
+
 def call(cmd, expected_returncode=0):
     p = subprocess.Popen(
         cmd,
