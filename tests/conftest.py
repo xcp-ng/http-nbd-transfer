@@ -28,12 +28,9 @@ def timeout_call(timeoutseconds, function, *arguments):
     signal.signal(signal.SIGALRM, handler)
     signal.alarm(timeoutseconds)
     try:
-        result = function(*arguments)
+        return function(*arguments)
+    finally:
         signal.alarm(0)
-        return result
-    except:
-        signal.alarm(0)
-        raise
 
 # ------------------------------------------------------------------------------
 
