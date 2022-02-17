@@ -1,0 +1,28 @@
+name: Check code compilation
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install dependencies
+      run: |
+        sudo apt-get -y install nbdkit-plugin-dev libcurl4-openssl-dev
+    - name: Build multi-http-plugin
+      run: |
+        make
+    - name: Set up Python 2.7
+      uses: actions/setup-python@v2
+      with:
+        python-version: 2.7
+    - name: Install test dependencies
+      run: |
+        sudo apt-get -y install nbd-client
+        python -m pip install --upgrade pip
+        pip install pytest
+    - name: Tests
+      run: |
+        pytest=$(which py.test)
+        sudo "PATH=$PATH" $pytest -s -vv tests/

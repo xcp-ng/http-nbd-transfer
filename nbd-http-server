@@ -1,0 +1,192 @@
+#!/usr/bin/env python
+
+#
+# Copyright (C) 2022  Vates SAS
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+
+from contextlib import contextmanager
+import argparse
+import errno
+import os
+import signal
+import subprocess
+import sys
+
+WORKING_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '')
+NBDKIT_PLUGIN = WORKING_DIR + '../lib64/nbdkit/plugins/nbdkit-multi-http-plugin.so'
+
+# ==============================================================================
+
+class CommandException(Exception):
+    def __init__(self, code, cmd, reason):
+        self.code = code
+        self.cmd = cmd
+        self.reason = reason
+        Exception.__init__(self, os.strerror(abs(code)))
+
+    def __str__(self):
+        return 'Command exception: `{}` (code: `{}`, reason: `{}`)'.format(
+            self.cmd, self.code, self.reason
+        )
+
+def call(cmd, expected_returncode=0):
+    p = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        close_fds=True
+    )
+
+    stdout, stderr = p.communicate()
+
+    if p.returncode != expected_returncode:
+        raise CommandException(p.returncode, str(cmd), stderr.strip())
+    return stdout
+
+# ==============================================================================
+
+class TimeoutException(Exception):
+    pass
+
+@contextmanager
+def timeout(seconds):
+    def handler(signum, frame):
+        raise TimeoutException
+
+    old_handler = signal.signal(signal.SIGALRM, handler)
+
+    try:
+        signal.alarm(seconds)
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
+
+# ==============================================================================
+
+class Nbd:
+    __slots__ = ('name', 'nbd')
+
+    def __init__(self, nbd, name):
+        self.nbd = nbd
+        self.name = name
+
+    def destroy(self):
+        try:
+            call(['nbd-client', '-d', '/dev/' + self.nbd])
+        except Exception as e:
+            print('Failed to destroy NBD {}: `{}`.'.format(self.nbd, e))
+
+def attach_nbd(socket_path, nbd_name):
+    def get_nbds():
+        return filter(lambda nbd: nbd.startswith('nbd'), os.listdir('/dev'))
+
+    nbds = get_nbds()
+    if not nbds:
+        call(['modprobe', 'nbd'])
+        nbds = get_nbds()
+        if not nbds:
+            raise Exception('No NBD available.')
+
+    for nbd in nbds:
+        try:
+            # Open to check if the device is not mounted.
+            nbd_path = '/dev/' + nbd
+            fd = os.open(nbd_path, os.O_EXCL)
+            os.close(fd)
+
+            # Ensure device is free.
+            call(['nbd-client', '-c', nbd_path], expected_returncode=1)
+
+            try:
+                with timeout(5):
+                    call(['nbd-client', '-unix', socket_path, nbd_path, '-b', '4096'])
+            except Exception as e:
+                raise Exception('Failed to attach socket `{}` to {}: {}.'.format(socket_path, nbd_path, e))
+        except Exception as e:
+            print('Cannot use NBD {}: `{}`.'.format(nbd, e))
+            # Try to find another free NBD.
+            continue
+
+        # NBD is now attached, try to modify scheduler + return NBD object.
+        print('NBD `{}` is now attached.'.format(nbd_path))
+        try:
+            with open('/sys/block/' + nbd + '/queue/scheduler', 'w') as fd:
+                fd.write('none')
+        except Exception as e:
+            print('Failed to modify scheduler of {}: `{}`.'.format(nbd_path, e))
+
+        return Nbd(nbd, nbd_name)
+
+    raise Exception('Cannot attach `{}` to NBD.'.format(socket_path))
+
+def run_nbd_server(socket_path, nbd_name, urls):
+    try:
+        os.remove(socket_path)
+    except OSError as e:
+        if e.errno != errno.ENOENT:
+            raise e
+
+    server = subprocess.Popen([
+        'nbdkit', '--verbose', '--foreground', '-U', socket_path, '-e', nbd_name, NBDKIT_PLUGIN, 'urls=' + urls
+    ])
+    nbd = None
+
+    try:
+        nbd = attach_nbd(socket_path, nbd_name)
+        # Flush to ensure we can read output (like NBD device used)
+        # in another process without waiting.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        run = True
+        while run:
+            try:
+                signal.pause()
+            except KeyboardInterrupt:
+                run = False
+    finally:
+        if nbd:
+            nbd.destroy()
+        server.send_signal(signal.SIGQUIT)
+        server.wait()
+
+# ==============================================================================
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        '--socket-path', action='store', dest='socket_path', default=None, required=True,
+        help='UNIX socket path to use'
+    )
+    parser.add_argument(
+        '--nbd-name', action='store', dest='nbd_name', default=None, required=True,
+        help='NBD export name'
+    )
+    parser.add_argument(
+        '--urls', action='store', dest='urls', default=None, required=True,
+        help='URLS to read/write data'
+    )
+
+    args = parser.parse_args()
+
+    try:
+        run_nbd_server(args.socket_path, args.nbd_name, args.urls)
+    except Exception as e:
+        print('Got exception: `{}`.'.format(e))
+        exit(1)
+
+if __name__ == '__main__':
+    main()

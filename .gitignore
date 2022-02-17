@@ -1,0 +1,3 @@
+*~
+*.so
+tests/__pycache__
