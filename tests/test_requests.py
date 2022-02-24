@@ -11,8 +11,9 @@ class TestRequests:
         random_backing_file.check_read_all()
 
     def test_simple_write(self, random_backing_file):
-        random_backing_file.check_write(os.urandom(1024), 0)
-        random_backing_file.check_read(1024, 0)
+        chunk_size = 512
+        random_backing_file.check_write('X' * chunk_size, 0)
+        random_backing_file.check_read(chunk_size, 0)
 
     def test_unaligned_read(self, random_backing_file):
         random_backing_file.check_read(2518684, 4155625)
@@ -31,7 +32,7 @@ class TestRequests:
         random_backing_file.check_read_all()
 
     def test_random_write(self, random_backing_file):
-        chunk_size = 4096 * 1024
+        chunk_size = 512 * 1024
 
         i = 0
         while i < 10:
@@ -49,7 +50,7 @@ class TestRequests:
         random_backing_file.check_read_all()
 
     def test_random_unaligned_write(self, random_backing_file):
-        base_chunk_size = 4096 * 1024
+        base_chunk_size = 512 * 1024
         diff_percent = 0.25
 
         diff = base_chunk_size * diff_percent

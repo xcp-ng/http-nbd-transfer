@@ -225,7 +225,26 @@ def MakeRequestHandler(disk, disk_capacity):
 
             dev = None
             try:
-                chunk = self.rfile.read(size)
+                encoding = self.headers.getheader('Transfer-Encoding')
+                if encoding is not None:
+                    if encoding != 'chunked':
+                        raise Exception('Unsupported encoding: `{}`.'.format(encoding))
+
+                    chunk = bytearray()
+                    while True:
+                        chunk_size = int(self.rfile.readline().strip(), 16)
+                        if not chunk_size:
+                            break
+                        chunk.extend(self.rfile.read(chunk_size))
+                        self.rfile.readline()
+
+                    if len(chunk) != size:
+                        raise Exception('Inconsistent values between chunked data and content range size!')
+                else:
+                    chunk = self.rfile.read(size)
+                    if len(chunk) < size:
+                        raise Exception('Truncated chunk!')
+
                 dev = open_device(self.disk)
                 eprint('PUT [{}]: Write {}B at {}.'.format(self.client_address[0], len(chunk), offset))
                 os.lseek(dev, offset, os.SEEK_SET)
