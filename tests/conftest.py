@@ -1,7 +1,11 @@
+import ctypes
+import io
 import os
+import random
 import re
 import signal
 import socket
+import string
 import subprocess
 import sys
 
@@ -15,9 +19,19 @@ REG_NBD_PATH = re.compile("^NBD `(/dev/nbd[0-9]+)` is now attached.$")
 
 HTTP_PORT = '8080'
 
+SECTOR_SIZE = 512
+SECTOR_MASK = SECTOR_SIZE - 1
+
+RANDOM_BUFFER_SIZE_KIB = 16 * 1024
+
 # ==============================================================================
 # Helpers.
 # ==============================================================================
+
+def generate_random_string(length):
+    return ''.join(random.choice(string.ascii_letters) for i in range(length))
+
+# ------------------------------------------------------------------------------
 
 class TimeoutException(Exception):
     pass
@@ -47,6 +61,25 @@ def generate_random_buffer(size_kib):
     for i in range(size_kib):
         chunk = os.urandom(1024)
         random_buffer.extend(chunk)
+    return random_buffer
+
+def generate_aligned_buffer(size, alignment):
+    buffer_size = size + (alignment - 1)
+    buffer = bytearray(buffer_size)
+
+    ctypes_buffer = (ctypes.c_char * buffer_size).from_buffer(buffer)
+    buffer_address = ctypes.addressof(ctypes_buffer)
+
+    offset = (alignment - buffer_address % alignment) % alignment
+
+    aligned_buffer = (ctypes.c_char * (buffer_size - offset)).from_buffer(buffer, offset)
+    assert ctypes.addressof(aligned_buffer) % alignment == 0
+    return aligned_buffer
+
+def generate_aligned_random_buffer(size_kib, alignment_b):
+    random_buffer = generate_aligned_buffer(size_kib * 1024, alignment_b)
+    for i in range(size_kib):
+        random_buffer[i * 1024:(i + 1) * 1024] = os.urandom(1024)
     return random_buffer
 
 # ------------------------------------------------------------------------------
@@ -118,10 +151,11 @@ def start_nbd_server(volume_name):
 # ==============================================================================
 
 class Device(object):
-    __slots__ = ('_buffer', '_fd', '_capacity')
+    __slots__ = ('_buffer', '_read_buffer', '_fd', '_capacity')
 
     def __init__(self, buffer, fd):
         self._buffer = buffer
+        self._read_buffer = generate_aligned_random_buffer(len(buffer) / 1024, SECTOR_SIZE)
         self._fd = fd
         self._capacity = len(self._buffer)
 
@@ -135,12 +169,8 @@ class Device(object):
         if count > max_count:
             count = max_count
         print('Device: Read {}B at {}.'.format(count, offset))
-        chunk = os.read(self._fd, count)
         expected_chunk = buffer(self._buffer, offset, count)
-        assert buffer(chunk, 0, len(chunk)) == expected_chunk
-
-    def check_read_all(self):
-        self.check_read(len(self._buffer), 0)
+        self._check_read_unsafe(count, expected_chunk)
 
     def check_write(self, chunk, offset):
         offset = self._seek(offset)
@@ -153,22 +183,75 @@ class Device(object):
         self._buffer[offset:offset + count] = chunk
         os.write(self._fd, chunk)
 
+    def check_read_all(self):
+        self.check_read(len(self._buffer), 0)
+
+    def _check_read_unsafe(self, count, expected_chunk):
+        buffer_view = self._get_read_buffer_view(count)
+        read_count = self._read(self._fd, buffer_view)
+        assert buffer(buffer_view, 0, read_count) == expected_chunk
+
     def _seek(self, offset):
         if offset > self._capacity:
             offset = self._capacity
-        os.lseek(self._fd, offset, os.SEEK_SET)
+        self._seek_unsafe(offset)
         return offset
+
+    def _seek_unsafe(self, offset):
+        os.lseek(self._fd, offset, os.SEEK_SET)
+
+    def _get_read_buffer_view(self, count):
+        return (ctypes.c_char * count).from_buffer(self._read_buffer)
+
+    @staticmethod
+    def _read(fd, buffer):
+        with io.FileIO(fd, closefd=False) as fio:
+            return fio.readinto(buffer)
+
+class MirrorDevice(Device):
+    __slots__ = ('_fd_mirror', )
+
+    def __init__(self, device, fd_mirror):
+        super(MirrorDevice, self).__init__(device._buffer, device._fd)
+        self._fd_mirror = fd_mirror
+
+    # Because O_DIRECT is used in mirroring mode, we must ensure buffer addrs,
+    # sizes and offsets are correctly aligned.
+    def check_read(self, count, offset):
+        assert count & SECTOR_MASK == 0
+        assert offset & SECTOR_MASK == 0
+        super(MirrorDevice, self).check_read(count, offset)
+
+    def check_write(self, chunk, offset):
+        # Note: Assume chunk addr is correctly aligned.
+        assert len(chunk) & SECTOR_MASK == 0
+        assert offset & SECTOR_MASK == 0
+        super(MirrorDevice, self).check_write(chunk, offset)
+
+    def _check_read_unsafe(self, count, expected_chunk):
+        assert count & SECTOR_MASK == 0
+        buffer_view = self._get_read_buffer_view(count)
+        assert ctypes.addressof(buffer_view) & SECTOR_MASK == 0
+
+        read_count = self._read(self._fd, buffer_view)
+        assert buffer(buffer_view, 0, read_count) == expected_chunk
+
+        read_count = self._read(self._fd_mirror, buffer_view)
+        assert buffer(buffer_view, 0, read_count) == expected_chunk
+
+    def _seek_unsafe(self, offset):
+        os.lseek(self._fd, offset, os.SEEK_SET)
+        os.lseek(self._fd_mirror, offset, os.SEEK_SET)
 
 # ------------------------------------------------------------------------------
 
-@pytest.fixture(scope='class')
-def random_backing_file(request):
-    random_buffer = generate_random_buffer(size_kib=16 * 1024)
+def create_random_backing_file(request, open_flags):
+    random_buffer = generate_random_buffer(size_kib=RANDOM_BUFFER_SIZE_KIB)
 
     http_server = None
     nbd_server = None
     fd = None
-    backing_path = WORKING_DIR + 'image.bin'
+    backing_path = WORKING_DIR + 'image-' + generate_random_string(32) + '.bin'
 
     def clean():
         kill_server(nbd_server)
@@ -184,7 +267,7 @@ def random_backing_file(request):
         http_server = start_http_server(backing_path)
         (nbd_server, nbd_path) = start_nbd_server('disk-test')
 
-        fd = os.open(nbd_path, os.O_RDWR | os.O_SYNC)
+        fd = os.open(nbd_path, open_flags)
     except Exception:
         clean()
         raise
@@ -192,3 +275,33 @@ def random_backing_file(request):
     device = Device(random_buffer, fd)
     request.addfinalizer(clean)
     return device
+
+@pytest.fixture(scope='class')
+def random_backing_file(request):
+    return create_random_backing_file(request, os.O_RDWR | os.O_SYNC)
+
+@pytest.fixture(scope='class')
+def random_backing_file_with_o_direct(request):
+    return create_random_backing_file(request, os.O_RDWR | os.O_SYNC | os.O_DIRECT)
+
+@pytest.fixture(scope='class')
+def backing_file_mirror(request, random_backing_file_with_o_direct):
+    nbd_server = None
+
+    def clean():
+        kill_server(nbd_server)
+
+    try:
+        (nbd_server, nbd_path) = start_nbd_server('disk-test-mirror')
+        fd = os.open(nbd_path, os.O_RDWR | os.O_DIRECT | os.O_SYNC)
+    except Exception:
+        clean()
+        raise
+
+    device = MirrorDevice(random_backing_file_with_o_direct, fd)
+    request.addfinalizer(clean)
+    return device
+
+@pytest.fixture(scope='class')
+def aligned_buffer():
+    return generate_aligned_buffer(RANDOM_BUFFER_SIZE_KIB * 1024, SECTOR_SIZE)
