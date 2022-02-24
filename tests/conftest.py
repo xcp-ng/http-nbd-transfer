@@ -92,7 +92,7 @@ def start_nbd_server(volume_name):
     nbd_server = subprocess.Popen(
         arguments,
         stdout=subprocess.PIPE,
-        stderr=sys.stderr,
+        stderr=subprocess.STDOUT,
         preexec_fn=os.setsid
     )
 

@@ -29,6 +29,9 @@ NBDKIT_PLUGIN = WORKING_DIR + '../lib64/nbdkit/plugins/nbdkit-multi-http-plugin.
 
 # ==============================================================================
 
+def eprint(str):
+    print >> sys.stderr, str
+
 class CommandException(Exception):
     def __init__(self, code, cmd, reason):
         self.code = code
@@ -87,7 +90,7 @@ class Nbd:
         try:
             call(['nbd-client', '-d', '/dev/' + self.nbd])
         except Exception as e:
-            print('Failed to destroy NBD {}: `{}`.'.format(self.nbd, e))
+            eprint('Failed to destroy NBD {}: `{}`.'.format(self.nbd, e))
 
 def attach_nbd(socket_path, nbd_name):
     def get_nbds():
@@ -116,17 +119,17 @@ def attach_nbd(socket_path, nbd_name):
             except Exception as e:
                 raise Exception('Failed to attach socket `{}` to {}: {}.'.format(socket_path, nbd_path, e))
         except Exception as e:
-            print('Cannot use NBD {}: `{}`.'.format(nbd, e))
+            eprint('Cannot use NBD {}: `{}`.'.format(nbd, e))
             # Try to find another free NBD.
             continue
 
         # NBD is now attached, try to modify scheduler + return NBD object.
-        print('NBD `{}` is now attached.'.format(nbd_path))
+        eprint('NBD `{}` is now attached.'.format(nbd_path))
         try:
             with open('/sys/block/' + nbd + '/queue/scheduler', 'w') as fd:
                 fd.write('none')
         except Exception as e:
-            print('Failed to modify scheduler of {}: `{}`.'.format(nbd_path, e))
+            eprint('Failed to modify scheduler of {}: `{}`.'.format(nbd_path, e))
 
         return Nbd(nbd, nbd_name)
 
@@ -185,7 +188,7 @@ def main():
     try:
         run_nbd_server(args.socket_path, args.nbd_name, args.urls)
     except Exception as e:
-        print('Got exception: `{}`.'.format(e))
+        eprint('Got exception: `{}`.'.format(e))
         exit(1)
 
 if __name__ == '__main__':
