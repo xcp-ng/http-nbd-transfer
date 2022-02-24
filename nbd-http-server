@@ -115,7 +115,7 @@ def attach_nbd(socket_path, nbd_name):
 
             try:
                 with timeout(5):
-                    call(['nbd-client', '-unix', socket_path, nbd_path, '-b', '4096'])
+                    call(['nbd-client', '-unix', socket_path, nbd_path, '-b', '512'])
             except Exception as e:
                 raise Exception('Failed to attach socket `{}` to {}: {}.'.format(socket_path, nbd_path, e))
         except Exception as e:
