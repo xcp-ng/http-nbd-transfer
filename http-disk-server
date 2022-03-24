@@ -265,9 +265,9 @@ def MakeRequestHandler(disk, disk_capacity):
 
     return RequestHandler
 
-def run_server(disk, disk_capacity, port):
+def run_server(disk, disk_capacity, ip, port):
     HandlerClass = MakeRequestHandler(disk, disk_capacity)
-    httpd = HTTPServer((socket.gethostname(), port), HandlerClass)
+    httpd = HTTPServer((ip or '', port), HandlerClass)
 
     run = True
     while run:
@@ -287,6 +287,10 @@ def main():
         help='Device to share'
     )
     parser.add_argument(
+        '--ip', action='store', dest='ip', type=str, default='', required=False,
+        help='IP to use'
+    )
+    parser.add_argument(
         '--port', action='store', dest='port', type=int, default=8000, required=False,
         help='Port to use'
     )
@@ -303,7 +307,7 @@ def main():
 
     if dev and disk_capacity > 0:
         try:
-            run_server(args.disk, disk_capacity, args.port)
+            run_server(args.disk, disk_capacity, args.ip, args.port)
         except Exception as e:
             eprint('Unhandled exception: `{}`.'.format(e))
 
