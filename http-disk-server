@@ -27,6 +27,7 @@ import stat
 import struct
 import sys
 import time
+import traceback
 
 BLKGETSIZE64 = 0x80081272
 
@@ -275,7 +276,12 @@ def run_server(disk, disk_capacity, ip, port):
             httpd.serve_forever()
         except KeyboardInterrupt:
             run = False
-    httpd.server_close()
+        finally:
+            try:
+                httpd.server_close()
+            except Exception as e:
+                eprint('Failed to close server: {}.'.format(e))
+                pass
 
 # ==============================================================================
 
@@ -306,10 +312,14 @@ def main():
         close_device(dev)
 
     if dev and disk_capacity > 0:
-        try:
-            run_server(args.disk, disk_capacity, args.ip, args.port)
-        except Exception as e:
-            eprint('Unhandled exception: `{}`.'.format(e))
+        while True:
+            try:
+                run_server(args.disk, disk_capacity, args.ip, args.port)
+            except Exception as e:
+                eprint('Unhandled exception: `{}`.'.format(e))
+                eprint(traceback.format_exc())
+                eprint('Restarting server...')
+                time.sleep(1)
 
 if __name__ == '__main__':
     main()
