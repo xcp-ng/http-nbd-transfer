@@ -36,7 +36,7 @@ REQ_LIMIT_SIZE = 1024 * 1024 * 128  # In bytes
 DRBD_MAJOR = 147
 
 DRBD_OPEN_ATTEMPTS = 100
-DRBD_OPEN_SLEEP_INTERVAL = 100
+DRBD_OPEN_SLEEP_INTERVAL = 0.100  # In seconds.
 
 # ==============================================================================
 
