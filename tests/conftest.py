@@ -84,6 +84,28 @@ def generate_aligned_random_buffer(size_kib, alignment_b):
 
 # ------------------------------------------------------------------------------
 
+def get_dmesg_output():
+    p = subprocess.Popen(
+        ['dmesg'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        close_fds=True
+    )
+
+    limit = 30
+    lines = []
+    while True:
+        line = p.stdout.readline()
+        if not line:
+            break
+        if len(lines) == limit:
+            lines.pop(0)
+        lines.append(line)
+
+    return '\n'.join(lines)
+
+# ------------------------------------------------------------------------------
+
 def kill_server(server):
     if server:
         try:
@@ -136,11 +158,12 @@ def start_nbd_server(volume_name):
                 match = REG_NBD_PATH.match(line)
                 if match:
                     return match.group(1)
-        nbd_path = timeout_call(10, get_nbd_path)
+        nbd_path = timeout_call(30, get_nbd_path)
         if nbd_path is None:
             raise Exception('NBD path is empty!')
     except Exception:
         kill_server(nbd_server)
+        print('Failed to get NBD path (dmesg): {}'.format(get_dmesg_output()))
         raise
 
     print('Used NBD path: `{}`.'.format(nbd_path))
