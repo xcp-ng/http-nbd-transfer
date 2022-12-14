@@ -29,6 +29,12 @@ NBDKIT_PLUGIN = WORKING_DIR + '../lib64/nbdkit/plugins/nbdkit-multi-http-plugin.
 
 # ==============================================================================
 
+SIGTERM_RECEIVED = False
+
+def handle_sigterm(*args):
+    global SIGTERM_RECEIVED
+    SIGTERM_RECEIVED = True
+
 def eprint(str):
     print >> sys.stderr, str
 
@@ -156,8 +162,13 @@ def run_nbd_server(socket_path, nbd_name, urls):
         run = True
         while run:
             try:
-                signal.pause()
+                if SIGTERM_RECEIVED:
+                    eprint('SIGTERM received. Exiting server...')
+                    run = False
+                else:
+                    signal.pause()
             except KeyboardInterrupt:
+                eprint('Exiting server...')
                 run = False
     finally:
         if nbd:
@@ -186,6 +197,7 @@ def main():
     args = parser.parse_args()
 
     try:
+        signal.signal(signal.SIGTERM, handle_sigterm)
         run_nbd_server(args.socket_path, args.nbd_name, args.urls)
     except Exception as e:
         eprint('Got exception: `{}`.'.format(e))
