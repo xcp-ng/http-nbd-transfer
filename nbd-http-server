@@ -35,22 +35,37 @@ def handle_sigterm(*args):
     global SIGTERM_RECEIVED
     SIGTERM_RECEIVED = True
 
+# -----------------------------------------------------------------------------
+
+def pid_exists(pid):
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+# -----------------------------------------------------------------------------
+
 def eprint(str):
     print >> sys.stderr, str
 
+# -----------------------------------------------------------------------------
+
 class CommandException(Exception):
-    def __init__(self, code, cmd, reason):
+    def __init__(self, code, cmd, stdout, stderr):
         self.code = code
         self.cmd = cmd
-        self.reason = reason
+        self.stdout = stdout
+        self.stderr = stderr
         Exception.__init__(self, os.strerror(abs(code)))
 
     def __str__(self):
         return 'Command exception: `{}` (code: `{}`, reason: `{}`)'.format(
-            self.cmd, self.code, self.reason
+            self.cmd, self.code, self.stderr
         )
 
 def call(cmd, expected_returncode=0):
+    eprint('Call command: {}'.format(cmd))
     p = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -61,7 +76,7 @@ def call(cmd, expected_returncode=0):
     stdout, stderr = p.communicate()
 
     if p.returncode != expected_returncode:
-        raise CommandException(p.returncode, str(cmd), stderr.strip())
+        raise CommandException(p.returncode, str(cmd), stdout.strip(), stderr.strip())
     return stdout
 
 # ==============================================================================
@@ -110,23 +125,37 @@ def attach_nbd(socket_path, nbd_name):
             raise Exception('No NBD available.')
 
     for nbd in nbds:
+        nbd_path = '/dev/' + nbd
+
+        # Open to check if the device is not mounted.
         try:
-            # Open to check if the device is not mounted.
-            nbd_path = '/dev/' + nbd
             fd = os.open(nbd_path, os.O_EXCL)
             os.close(fd)
+        except Exception:
+            continue
 
-            # Ensure device is free.
+        # Ensure device is free.
+        try:
             call(['nbd-client', '-c', nbd_path], expected_returncode=1)
-
+        except CommandException as e:
             try:
-                with timeout(5):
-                    call(['nbd-client', '-unix', socket_path, nbd_path, '-b', '512'])
-            except Exception as e:
-                raise Exception('Failed to attach socket `{}` to {}: {}.'.format(socket_path, nbd_path, e))
+                old_pid = int(e.stdout)
+            except ValueError:
+                continue
+
+            if not pid_exists(old_pid):
+                eprint(
+                    'Potential leaked NBD device detected: `{}` used by dead process {}'
+                    .format(nbd_path, old_pid)
+                )
+            continue
+
+        # Use free device.
+        try:
+            with timeout(5):
+                call(['nbd-client', '-unix', socket_path, nbd_path, '-b', '512'])
         except Exception as e:
-            eprint('Cannot use NBD {}: `{}`.'.format(nbd, e))
-            # Try to find another free NBD.
+            eprint('Failed to attach socket `{}` to {}: {}.'.format(socket_path, nbd_path, e))
             continue
 
         # NBD is now attached, try to modify scheduler + return NBD object.
