@@ -270,6 +270,10 @@ def run_server(disk, disk_capacity, ip, port):
     HandlerClass = MakeRequestHandler(disk, disk_capacity)
     httpd = HTTPServer((ip or '', port), HandlerClass)
 
+    # Must be placed just after the bind call of HTTPServer to notify
+    # parent process that would be waiting before launching NBD server(s).
+    eprint('Server ready!')
+
     run = True
     while run:
         try:
