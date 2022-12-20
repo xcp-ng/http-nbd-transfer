@@ -266,9 +266,15 @@ def MakeRequestHandler(disk, disk_capacity):
 
     return RequestHandler
 
+class HttpDiskServer(HTTPServer):
+    def __init__(self, *args, **kwargs):
+        # Reuse old port to avoid: "Address already in use".
+        self.allow_reuse_address = True
+        HTTPServer.__init__(self, *args, **kwargs)
+
 def run_server(disk, disk_capacity, ip, port):
     HandlerClass = MakeRequestHandler(disk, disk_capacity)
-    httpd = HTTPServer((ip or '', port), HandlerClass)
+    httpd = HttpDiskServer((ip or '', port), HandlerClass)
 
     # Must be placed just after the bind call of HTTPServer to notify
     # parent process that would be waiting before launching NBD server(s).
