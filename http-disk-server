@@ -30,6 +30,7 @@ import time
 import traceback
 
 BLKGETSIZE64 = 0x80081272
+BLKFLSBUF = (0x12 << 8) + 97 # Flush buffer cache.
 
 REQ_LIMIT_SIZE = 1024 * 1024 * 128  # In bytes
 
@@ -59,7 +60,6 @@ def open_device(dev_path):
     is_drbd = None
     while True:
         try:
-            # Note: Can't use O_DIRECT with DRBD diskless volumes.
             return os.open(dev_path, os.O_RDWR)
         except OSError as e:
             if e.errno == errno.EAGAIN or e.errno == errno.EINTR:
@@ -246,6 +246,7 @@ def MakeRequestHandler(disk, dev_fd):
                 eprint('PUT [{}]: Write {}B at {}.'.format(self.client_address[0], len(chunk), offset))
                 os.lseek(dev, offset, os.SEEK_SET)
                 os.write(dev, chunk)
+                fcntl.ioctl(dev, BLKFLSBUF)
             except Exception as e:
                 eprint('Can\'t do PUT: `{}`.'.format(e))
                 self.send_response(500)
