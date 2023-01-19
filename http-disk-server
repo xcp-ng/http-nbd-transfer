@@ -113,7 +113,7 @@ def get_device_size(fd):
             raise
     return disk_capacity
 
-def MakeRequestHandler(disk, disk_capacity):
+def MakeRequestHandler(disk, dev_fd):
     class RequestHandler(BaseHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             # Note: We cannot use this call in python 2:
@@ -123,7 +123,7 @@ def MakeRequestHandler(disk, disk_capacity):
             # The base class of `BaseHTTPRequestHandler` uses an old def:
             # "class BaseRequestHandler:"
             self.disk = disk
-            self.disk_capacity = disk_capacity  # TODO: Detect capacity update?
+            self.dev_fd = dev_fd
             BaseHTTPRequestHandler.__init__(self, *args, **kwargs)
 
         # See: https://stackoverflow.com/questions/6063416/python-basehttpserver-how-do-i-catch-trap-broken-pipe-errors#answer-14355079
@@ -150,7 +150,7 @@ def MakeRequestHandler(disk, disk_capacity):
                         values = req_range[1:].lstrip().split('-')
                         begin = int(values[0])
                         end = int(values[1])
-                        if begin <= end and end - begin < self.disk_capacity:
+                        if begin <= end and end - begin < get_device_size(self.dev_fd):
                             return [begin, end - begin + 1]
                     except Exception:
                         pass
@@ -172,7 +172,7 @@ def MakeRequestHandler(disk, disk_capacity):
                     values = req_range.split('-')
                     begin = int(values[0])
                     end = int(values[1].split('/')[0].strip())
-                    if begin <= end and end - begin < self.disk_capacity:
+                    if begin <= end and end - begin < get_device_size(self.dev_fd):
                         return [begin, end - begin + 1]
                 except Exception:
                     pass
@@ -184,7 +184,7 @@ def MakeRequestHandler(disk, disk_capacity):
         def do_HEAD(self):
             self.send_response(200)
             self.send_header('Accept-Ranges', 'bytes')
-            self.send_header('Content-Length', str(self.disk_capacity))
+            self.send_header('Content-Length', str(get_device_size(self.dev_fd)))
             self.end_headers()
 
         def do_GET(self):
@@ -195,9 +195,8 @@ def MakeRequestHandler(disk, disk_capacity):
             offset = req_range[0]
             size = min(req_range[1], REQ_LIMIT_SIZE)
 
-            dev = None
+            dev = self.dev_fd
             try:
-                dev = open_device(self.disk)
                 eprint('GET [{}]: Read {}B at {}.'.format(self.client_address[0], size, offset))
                 os.lseek(dev, offset, os.SEEK_SET)
                 chunk = os.read(dev, size)
@@ -206,11 +205,9 @@ def MakeRequestHandler(disk, disk_capacity):
                 self.send_response(500)
                 self.end_headers()
                 return
-            finally:
-                close_device(dev)
 
             self.send_response(206)
-            self.send_header('Content-Range', 'bytes {}-{}/{}'.format(offset, size - 1, self.disk_capacity))
+            self.send_header('Content-Range', 'bytes {}-{}/{}'.format(offset, size - 1, get_device_size(self.dev_fd)))
             self.send_header('Content-Length', str(int(size)))
             self.end_headers()
 
@@ -224,7 +221,7 @@ def MakeRequestHandler(disk, disk_capacity):
             offset = req_range[0]
             size = req_range[1]
 
-            dev = None
+            dev = self.dev_fd
             try:
                 encoding = self.headers.getheader('Transfer-Encoding')
                 if encoding is not None:
@@ -246,7 +243,6 @@ def MakeRequestHandler(disk, disk_capacity):
                     if len(chunk) < size:
                         raise Exception('Truncated chunk!')
 
-                dev = open_device(self.disk)
                 eprint('PUT [{}]: Write {}B at {}.'.format(self.client_address[0], len(chunk), offset))
                 os.lseek(dev, offset, os.SEEK_SET)
                 os.write(dev, chunk)
@@ -255,8 +251,6 @@ def MakeRequestHandler(disk, disk_capacity):
                 self.send_response(500)
                 self.end_headers()
                 return
-            finally:
-                close_device(dev)
 
             self.send_response(200)
             self.end_headers()
@@ -272,8 +266,8 @@ class HttpDiskServer(HTTPServer):
         self.allow_reuse_address = True
         HTTPServer.__init__(self, *args, **kwargs)
 
-def run_server(disk, disk_capacity, ip, port):
-    HandlerClass = MakeRequestHandler(disk, disk_capacity)
+def run_server(disk, dev_fd, ip, port):
+    HandlerClass = MakeRequestHandler(disk, dev_fd)
     httpd = HttpDiskServer((ip or '', port), HandlerClass)
 
     # Must be placed just after the bind call of HTTPServer to notify
@@ -313,23 +307,26 @@ def main():
 
     args = parser.parse_args()
 
-    # Ensure we can open the device and get size.
-    dev = None
-    try:
+
+    while True:
+        # Ensure we can open the device and get size.
+        dev = None
         dev = open_device(args.disk)
         disk_capacity = get_device_size(dev)
-    finally:
-        close_device(dev)
+        # keep the FD 'dev' as long as the program runs, to keep the
+        # drbd resource primary.
+        if not (dev and disk_capacity > 0):
+            return
 
-    if dev and disk_capacity > 0:
-        while True:
-            try:
-                run_server(args.disk, disk_capacity, args.ip, args.port)
-            except Exception as e:
-                eprint('Unhandled exception: `{}`.'.format(e))
-                eprint(traceback.format_exc())
-                eprint('Restarting server...')
-                time.sleep(1)
+        try:
+            run_server(args.disk, dev, args.ip, args.port)
+        except Exception as e:
+            eprint('Unhandled exception: `{}`.'.format(e))
+            eprint(traceback.format_exc())
+            eprint('Restarting server...')
+
+        close_device(dev)
+        time.sleep(1)
 
 if __name__ == '__main__':
     main()
