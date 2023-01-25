@@ -15,7 +15,7 @@ import pytest
 
 WORKING_DIR = os.path.dirname(os.path.abspath(__file__)) + '/'
 
-REG_NBD_PATH = re.compile("^NBD `(/dev/nbd[0-9]+)` is now attached.$")
+REG_NBD_PATH = re.compile("NBD `(/dev/nbd[0-9]+)` is now attached.$")
 
 HTTP_PORT = '8080'
 
@@ -110,6 +110,7 @@ def kill_server(server):
     if server:
         try:
             os.killpg(os.getpgid(server.pid), signal.SIGTERM)
+            os.waitpid(server.pid)
         except Exception as e:
             print('Failed to kill: `{}`.'.format(e))
 
@@ -133,7 +134,7 @@ def start_http_server(backing_path):
 
 # ------------------------------------------------------------------------------
 
-def start_nbd_server(volume_name):
+def start_nbd_server(volume_name, device_size):
     arguments = [
         WORKING_DIR + 'bin/nbd-http-server',
         '--socket-path',
@@ -141,7 +142,9 @@ def start_nbd_server(volume_name):
         '--nbd-name',
         volume_name,
         '--urls',
-        'http://{}:{}'.format(socket.gethostname(), HTTP_PORT)
+        'http://{}:{}'.format(socket.gethostname(), HTTP_PORT),
+        '--device-size',
+        str(device_size)
     ]
 
     nbd_server = subprocess.Popen(
@@ -155,7 +158,7 @@ def start_nbd_server(volume_name):
         def get_nbd_path():
             while nbd_server.poll() is None:
                 line = nbd_server.stdout.readline()
-                match = REG_NBD_PATH.match(line)
+                match = REG_NBD_PATH.search(line)
                 if match:
                     return match.group(1)
         nbd_path = timeout_call(30, get_nbd_path)
@@ -288,7 +291,7 @@ def create_random_backing_file(request, open_flags):
             f.write(random_buffer)
 
         http_server = start_http_server(backing_path)
-        (nbd_server, nbd_path) = start_nbd_server('disk-test')
+        (nbd_server, nbd_path) = start_nbd_server('disk-test', RANDOM_BUFFER_SIZE_KIB * 1024)
 
         fd = os.open(nbd_path, open_flags)
     except Exception:
@@ -315,7 +318,7 @@ def backing_file_mirror(request, random_backing_file_with_o_direct):
         kill_server(nbd_server)
 
     try:
-        (nbd_server, nbd_path) = start_nbd_server('disk-test-mirror')
+        (nbd_server, nbd_path) = start_nbd_server('disk-test-mirror', RANDOM_BUFFER_SIZE_KIB * 1024)
         fd = os.open(nbd_path, os.O_RDWR | os.O_DIRECT | os.O_SYNC)
     except Exception:
         clean()

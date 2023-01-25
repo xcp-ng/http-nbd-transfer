@@ -16,6 +16,7 @@
 
 #include <assert.h>
 #include <curl/curl.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -31,6 +32,7 @@
 #define UNUSED(X) (void)X;
 
 #define BROKEN_PIPE_RETRY_COUNT 30
+#define TIMEOUT_SERVER_TEST 3000L
 
 // -----------------------------------------------------------------------------
 // Config & handle.
@@ -43,6 +45,8 @@ typedef struct {
   // Optional.
   const char *user;
   char *password;
+  size_t deviceSize;
+  bool hasDeviceSize;
 
   // Internal.
   const char **urlArray;
@@ -77,6 +81,20 @@ typedef struct {
 #define log_error(HANDLE, RES, MESSAGE, ...) do { \
   nbdkit_error((MESSAGE ": `%s` (%s)."), ## __VA_ARGS__, curl_easy_strerror((RES)), (HANDLE)->errBuf); \
 } while (false)
+
+// -----------------------------------------------------------------------------
+// Conv helpers.
+// -----------------------------------------------------------------------------
+
+static size_t toSize (const char *str, bool *ok) {
+  char *end;
+  long long value = strtoll(str, &end, 10);
+
+  if (ok)
+    *ok = end != str && errno != ERANGE && value >= 0;
+
+  return (size_t)value;
+}
 
 // -----------------------------------------------------------------------------
 // Another implementation of some ctype functions to avoid usage of current
@@ -307,6 +325,12 @@ static int select_server (Handle *handle, int limitUrlId, int serverCount) {
       continue;
     }
 
+    res = curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, TIMEOUT_SERVER_TEST);
+    if (res != CURLE_OK) {
+      log_error(handle, res, "Cannot set timeout on `%s`", url);
+      continue;
+    }
+
     res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
       log_error(handle, res, "Cannot exec head request properly on `%s`", url);
@@ -393,15 +417,23 @@ static void cb_unload () {
 }
 
 static int cb_config (const char *key, const char *value) {
-  if (!strcmp (key, "urls")) {
+  if (!strcmp(key, "urls")) {
     free(Config.urls);
     Config.urls = strdup(value);
-  } else if (!strcmp (key, "user")) {
+  } else if (!strcmp(key, "user")) {
     Config.user = value;
-  } else if (!strcmp (key, "password")) {
+  } else if (!strcmp(key, "password")) {
     free(Config.password);
     if (nbdkit_read_password(value, &Config.password) == -1)
       return -1;
+  } else if (!strcmp(key, "device-size")) {
+    bool ok;
+    Config.deviceSize = toSize(value, &ok);
+    if (!ok) {
+      nbdkit_error("Invalid device size!");
+      return -1;
+    }
+    Config.hasDeviceSize = true;
   } else {
     nbdkit_error("Unknown parameter: `%s`.", key);
     return -1;
@@ -468,17 +500,35 @@ static void *cb_open (int readonly) {
 
   handle->readonly = readonly;
   handle->currentUrlId = -1;
-  auto_select_server(handle);
+
+  // In any case we must return a valid handle. So if we can't reach a server and if the device size
+  // is not given using the command line, it's problematic. We must exit.
+  if (auto_select_server(handle) < 0) {
+    nbdkit_error("Failed to select a server at startup.");
+
+    if (!Config.hasDeviceSize) {
+      nbdkit_error("No device size, exit!");
+      free(handle);
+      return NULL;
+    }
+  }
+
+  if (Config.hasDeviceSize)
+    handle->deviceSize = Config.deviceSize;
+
   return handle;
 }
 
 static void cb_close (void *userData) {
   Handle *handle = userData;
-  curl_easy_cleanup(handle->curl);
-  free(handle);
+  if (handle) {
+    curl_easy_cleanup(handle->curl);
+    free(handle);
+  }
 }
 
 static int64_t cb_get_size (void *userData) {
+  // Called only one time after the open call. So the device size must always be valid.
   return (int64_t)((Handle *)userData)->deviceSize;
 }
 
