@@ -29,6 +29,8 @@ NBDKIT_PLUGIN = WORKING_DIR + '../lib64/nbdkit/plugins/nbdkit-multi-http-plugin.
 
 # ==============================================================================
 
+OUTPUT_PREFIX = ''
+
 SIGTERM_RECEIVED = False
 
 def handle_sigterm(*args):
@@ -46,8 +48,23 @@ def pid_exists(pid):
 
 # -----------------------------------------------------------------------------
 
+def remove_file(path):
+    try:
+        os.remove(path)
+    except OSError as e:
+        if e.errno != errno.ENOENT:
+            raise e
+
+def run_or_ignore(fun):
+    try:
+        fun()
+    except Exception:
+        pass
+
+# -----------------------------------------------------------------------------
+
 def eprint(str):
-    print >> sys.stderr, str
+    print >> sys.stderr, OUTPUT_PREFIX + str
 
 # -----------------------------------------------------------------------------
 
@@ -82,7 +99,8 @@ def call(cmd, expected_returncode=0):
 # ==============================================================================
 
 class TimeoutException(Exception):
-    pass
+    def __init__(self):
+        super(Exception, self).__init__('timeout')
 
 @contextmanager
 def timeout(seconds):
@@ -100,6 +118,19 @@ def timeout(seconds):
 
 # ==============================================================================
 
+def get_nbd_pid(nbd_path):
+    try:
+        call(['nbd-client', '-c', nbd_path], expected_returncode=1)
+    except CommandException as e:
+        try:
+            return int(e.stdout)
+        except ValueError:
+            return -1
+    return None
+
+def disconnect_nbd(nbd_path):
+    call(['nbd-client', '-d', nbd_path])
+
 class Nbd:
     __slots__ = ('name', 'nbd')
 
@@ -107,13 +138,13 @@ class Nbd:
         self.nbd = nbd
         self.name = name
 
-    def destroy(self):
+    def disconnect(self):
         try:
-            call(['nbd-client', '-d', '/dev/' + self.nbd])
+            disconnect_nbd('/dev/' + self.nbd)
         except Exception as e:
-            eprint('Failed to destroy NBD {}: `{}`.'.format(self.nbd, e))
+            eprint('Failed to disconnect NBD {}: `{}`.'.format(self.nbd, e))
 
-def attach_nbd(socket_path, nbd_name):
+def attach_nbd(socket_path, nbd_name, pid_path):
     def get_nbds():
         return filter(lambda nbd: nbd.startswith('nbd'), os.listdir('/dev'))
 
@@ -135,27 +166,44 @@ def attach_nbd(socket_path, nbd_name):
             continue
 
         # Ensure device is free.
-        try:
-            call(['nbd-client', '-c', nbd_path], expected_returncode=1)
-        except CommandException as e:
-            try:
-                old_pid = int(e.stdout)
-            except ValueError:
-                continue
-
-            if not pid_exists(old_pid):
+        # Also we must do that, otherwise this error can be produced during the attach:
+        # "Ioctl NBD_SET_SOCK failed: Device or resource busy"
+        # And of course, this error kills our server.
+        pid = get_nbd_pid(nbd_path)
+        if pid is not None:
+            if not pid_exists(pid):
                 eprint(
                     'Potential leaked NBD device detected: `{}` used by dead process {}'
-                    .format(nbd_path, old_pid)
+                    .format(nbd_path, pid)
                 )
             continue
 
         # Use free device.
         try:
-            with timeout(5):
+            # Use an extreme timeout here, should never be triggered.
+            with timeout(30):
                 call(['nbd-client', '-unix', socket_path, nbd_path, '-b', '512'])
         except Exception as e:
+            # We guess we have to try another device after that: this exception is probably
+            # caused by a concurrent attach and not with our nbdkit plugin.
             eprint('Failed to attach socket `{}` to {}: {}.'.format(socket_path, nbd_path, e))
+
+            # Ensure the device is still free after failed command.
+            # Note: a race condition exists when we try to release this device,
+            # if the targeted pid is invalid. It can be used by another process.
+            pid = None
+            try:
+                with open(pid_path) as f:
+                    pid = int(f.readline().strip('\n'))
+            except Exception:
+                continue
+            finally:
+                remove_file(pid_path)
+
+            targeted_pid = get_nbd_pid(nbd_path)
+            if (pid is not None and pid == targeted_pid) or targeted_pid < 0:
+                run_or_ignore(lambda: disconnect_nbd(nbd_path))
+
             continue
 
         # NBD is now attached, try to modify scheduler + return NBD object.
@@ -170,40 +218,51 @@ def attach_nbd(socket_path, nbd_name):
 
     raise Exception('Cannot attach `{}` to NBD.'.format(socket_path))
 
-def run_nbd_server(socket_path, nbd_name, urls):
-    try:
-        os.remove(socket_path)
-    except OSError as e:
-        if e.errno != errno.ENOENT:
-            raise e
+def run_nbd_server(socket_path, nbd_name, urls, device_size):
+    pid_path = '/var/run/nbd-{}.pid'.format(nbd_name)
 
-    server = subprocess.Popen([
-        'nbdkit', '--verbose', '--foreground', '-U', socket_path, '-e', nbd_name, NBDKIT_PLUGIN, 'urls=' + urls
-    ])
+    def clean_paths():
+        remove_file(socket_path)
+        remove_file(pid_path)
+
+    clean_paths()
+
+    arguments = [
+        'nbdkit',
+        '--verbose',
+        '--foreground',
+        '-U', socket_path,
+        '-e', nbd_name,
+        '-P', pid_path,
+        NBDKIT_PLUGIN,
+        'urls=' + urls
+    ]
+    if device_size is not None:
+        arguments.append('device-size=' + str(device_size))
+    server = subprocess.Popen(arguments)
     nbd = None
 
     try:
-        nbd = attach_nbd(socket_path, nbd_name)
+        nbd = attach_nbd(socket_path, nbd_name, pid_path)
         # Flush to ensure we can read output (like NBD device used)
         # in another process without waiting.
         sys.stdout.flush()
         sys.stderr.flush()
-        run = True
-        while run:
+        while True:
             try:
                 if SIGTERM_RECEIVED:
                     eprint('SIGTERM received. Exiting server...')
-                    run = False
-                else:
-                    signal.pause()
+                    break
+                signal.pause()
             except KeyboardInterrupt:
                 eprint('Exiting server...')
-                run = False
+                break
     finally:
         if nbd:
-            nbd.destroy()
+            nbd.disconnect()
         server.send_signal(signal.SIGQUIT)
         server.wait()
+        clean_paths()
 
 # ==============================================================================
 
@@ -222,12 +281,17 @@ def main():
         '--urls', action='store', dest='urls', default=None, required=True,
         help='URLS to read/write data'
     )
+    parser.add_argument(
+        '--device-size', action='store', dest='device_size', default=None, required=False, type=int,
+        help='Force the device size, instead of using an HTTP server to get it'
+    )
 
     args = parser.parse_args()
-
+    global OUTPUT_PREFIX
+    OUTPUT_PREFIX = '[' + args.nbd_name + '] '
     try:
         signal.signal(signal.SIGTERM, handle_sigterm)
-        run_nbd_server(args.socket_path, args.nbd_name, args.urls)
+        run_nbd_server(args.socket_path, args.nbd_name, args.urls, args.device_size)
     except Exception as e:
         eprint('Got exception: `{}`.'.format(e))
         exit(1)

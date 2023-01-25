@@ -1,6 +1,6 @@
 # http-nbd-transfer
 
-Set of tools to transfer NBD requests to a HTTP server:
+Set of tools to transfer NBD requests to an HTTP server:
 
   - `http-disk-server` is used to handle HTTP requests and to read/write in a device.
   - `nbd-server` is used to create a new NBD on the system, and to communicate with one or many HTTP servers.
