@@ -110,7 +110,7 @@ def kill_server(server):
     if server:
         try:
             os.killpg(os.getpgid(server.pid), signal.SIGTERM)
-            os.waitpid(server.pid)
+            os.waitpid(server.pid, 0)
         except Exception as e:
             print('Failed to kill: `{}`.'.format(e))
 
