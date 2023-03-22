@@ -9,6 +9,7 @@ jobs:
     - uses: actions/checkout@v2
     - name: Install dependencies
       run: |
+        sudo apt-get update
         sudo apt-get -y install nbdkit-plugin-dev libcurl4-openssl-dev
     - name: Build multi-http-plugin
       run: |
