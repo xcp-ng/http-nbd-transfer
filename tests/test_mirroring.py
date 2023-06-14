@@ -3,6 +3,8 @@ import random
 
 import pytest
 
+from tests import buffer
+
 # ==============================================================================
 
 @pytest.mark.usefixtures('aligned_buffer')
@@ -13,7 +15,7 @@ class TestMirroring:
 
     def test_simple_write(self, aligned_buffer, backing_file_mirror):
         chunk_size = 512
-        aligned_buffer[:chunk_size] = 'X' * chunk_size
+        aligned_buffer[:chunk_size] = b'X' * chunk_size
         backing_file_mirror.check_write(buffer(aligned_buffer, 0, chunk_size), 0)
         backing_file_mirror.check_read(chunk_size, 0)
 
