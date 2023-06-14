@@ -12,7 +12,7 @@ class TestRequests:
 
     def test_simple_write(self, random_backing_file):
         chunk_size = 512
-        random_backing_file.check_write('X' * chunk_size, 0)
+        random_backing_file.check_write(b'X' * chunk_size, 0)
         random_backing_file.check_read(chunk_size, 0)
 
     def test_unaligned_read(self, random_backing_file):

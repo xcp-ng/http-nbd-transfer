@@ -11,6 +11,8 @@ import sys
 
 import pytest
 
+from tests import buffer
+
 # ==============================================================================
 
 WORKING_DIR = os.path.dirname(os.path.abspath(__file__)) + '/'
@@ -57,6 +59,8 @@ def call_ignore(fun):
 # ------------------------------------------------------------------------------
 
 def generate_random_buffer(size_kib):
+    assert isinstance(size_kib, int)
+
     random_buffer = bytearray()
     for i in range(size_kib):
         chunk = os.urandom(1024)
@@ -64,6 +68,9 @@ def generate_random_buffer(size_kib):
     return random_buffer
 
 def generate_aligned_buffer(size, alignment):
+    assert isinstance(size, int)
+    assert isinstance(alignment, int)
+
     buffer_size = size + (alignment - 1)
     buffer = bytearray(buffer_size)
 
@@ -151,7 +158,8 @@ def start_nbd_server(volume_name, device_size):
         arguments,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        preexec_fn=os.setsid
+        preexec_fn=os.setsid,
+        universal_newlines=True
     )
 
     try:
@@ -181,7 +189,7 @@ class Device(object):
 
     def __init__(self, buffer, fd):
         self._buffer = buffer
-        self._read_buffer = generate_aligned_random_buffer(len(buffer) / 1024, SECTOR_SIZE)
+        self._read_buffer = generate_aligned_random_buffer(len(buffer) // 1024, SECTOR_SIZE)
         self._fd = fd
         self._capacity = len(self._buffer)
 
