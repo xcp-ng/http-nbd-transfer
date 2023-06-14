@@ -312,11 +312,11 @@ def create_random_backing_file(request, open_flags):
 
 @pytest.fixture(scope='class')
 def random_backing_file(request):
-    return create_random_backing_file(request, os.O_RDWR | os.O_SYNC)
+    return create_random_backing_file(request, os.O_RDWR)
 
 @pytest.fixture(scope='class')
 def random_backing_file_with_o_direct(request):
-    return create_random_backing_file(request, os.O_RDWR | os.O_SYNC | os.O_DIRECT)
+    return create_random_backing_file(request, os.O_RDWR | os.O_DIRECT)
 
 @pytest.fixture(scope='class')
 def backing_file_mirror(request, random_backing_file_with_o_direct):
@@ -327,7 +327,7 @@ def backing_file_mirror(request, random_backing_file_with_o_direct):
 
     try:
         (nbd_server, nbd_path) = start_nbd_server('disk-test-mirror', RANDOM_BUFFER_SIZE_KIB * 1024)
-        fd = os.open(nbd_path, os.O_RDWR | os.O_DIRECT | os.O_SYNC)
+        fd = os.open(nbd_path, os.O_RDWR | os.O_DIRECT)
     except Exception:
         clean()
         raise
