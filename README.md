@@ -12,7 +12,7 @@ Set of tools to transfer NBD requests to an HTTP server:
 - `curl` devel C lib
 - `nbdkit` devel C lib
 - `nbd` to use `nbd-client` binary
--
+
 ## Build
 
 Run `make` command directly in the root project directory.
