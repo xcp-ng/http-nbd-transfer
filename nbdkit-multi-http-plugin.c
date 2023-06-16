@@ -65,6 +65,9 @@ typedef struct {
   const char *readBuf;
   size_t readCount;
 
+  // Set to true when `CURLOPT_UPLOAD` is executed.
+  bool uploading;
+
   char *writeBuf;
   size_t writeCount;
 
@@ -164,10 +167,16 @@ static size_t curl_cb_header (void *ptr, size_t size, size_t nmemb, void *userDa
 }
 
 static size_t curl_cb_write (char *ptr, size_t size, size_t nmemb, void *userData) {
+  const size_t totalSize = size * nmemb;
+
   Handle *handle = userData;
+  if (handle->uploading) {
+    // We are in a `CURLOPT_UPLOAD` call, and there is no reason to write the HTTP PUT response...
+    assert(!handle->writeBuf);
+    return totalSize;
+  }
   assert(handle->writeBuf);
 
-  const size_t totalSize = size * nmemb;
   size_t written = totalSize;
   if (written > handle->writeCount)
     written = handle->writeCount;
@@ -558,6 +567,8 @@ static int cb_pread (void *userData, void *buf, uint32_t count, uint64_t offset,
   const int firstUrlId = handle->currentUrlId;
   assert(firstUrlId >= 0);
 
+  int ret = 0;
+
   for (int retryCount = BROKEN_PIPE_RETRY_COUNT; ; ) {
     handle->writeBuf = buf;
     handle->writeCount = count;
@@ -566,7 +577,7 @@ static int cb_pread (void *userData, void *buf, uint32_t count, uint64_t offset,
     exec_op(handle, CURLOPT_HTTPGET, count, offset, result);
     if (result == ReqErrorOk) {
       if (!handle->writeCount)
-        return 0;
+        goto success;
       nbdkit_error("Incomplete read request, retry on another server.");
     }
 
@@ -581,14 +592,16 @@ static int cb_pread (void *userData, void *buf, uint32_t count, uint64_t offset,
     nbdkit_error("Failed to read, trying another server...");
     if (auto_select_server_until_id(handle, firstUrlId) < 0) {
       nbdkit_error("Cannot re-exec read request, no valid server found.");
-      return -1;
+      goto err;
     }
   }
 
-  return 0;
-
 err:
-  return -1;
+  ret = -1;
+
+success:
+  handle->writeBuf = NULL;
+  return ret;
 }
 
 static int cb_pwrite (void *userData, const void *buf, uint32_t count, uint64_t offset, uint32_t flags) {
@@ -606,15 +619,18 @@ static int cb_pwrite (void *userData, const void *buf, uint32_t count, uint64_t 
   const int firstUrlId = handle->currentUrlId;
   assert(firstUrlId >= 0);
 
+  int ret = 0;
+
   for (int retryCount = BROKEN_PIPE_RETRY_COUNT; ; ) {
     handle->readBuf = buf;
     handle->readCount = count;
+    handle->uploading = true;
 
     ReqError result;
     exec_op(handle, CURLOPT_UPLOAD, count, offset, result);
     if (result == ReqErrorOk) {
       if (!handle->readCount)
-        return 0;
+        goto success;
       nbdkit_error("Incomplete write request, retry on another server.");
     }
 
@@ -629,14 +645,17 @@ static int cb_pwrite (void *userData, const void *buf, uint32_t count, uint64_t 
     nbdkit_error("Failed to write, trying another server...");
     if (auto_select_server_until_id(handle, firstUrlId) < 0) {
       nbdkit_error("Cannot re-exec write request, no valid server found.");
-      return -1;
+      goto err;
     }
   }
 
-  return 0;
-
 err:
-  return -1;
+  ret = -1;
+
+success:
+  handle->readBuf = NULL;
+  handle->uploading = false;
+  return ret;
 }
 
 #undef exec_op
