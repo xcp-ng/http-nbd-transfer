@@ -16,6 +16,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
+from __future__ import print_function
+
 from contextlib import contextmanager
 import argparse
 import errno
@@ -64,7 +66,7 @@ def run_or_ignore(fun):
 # -----------------------------------------------------------------------------
 
 def eprint(str):
-    print >> sys.stderr, OUTPUT_PREFIX + str
+    print(OUTPUT_PREFIX + str, file=sys.stderr)
 
 # -----------------------------------------------------------------------------
 
@@ -87,7 +89,8 @@ def call(cmd, expected_returncode=0):
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        close_fds=True
+        close_fds=True,
+        universal_newlines=True
     )
 
     stdout, stderr = p.communicate()
@@ -146,7 +149,7 @@ class Nbd:
 
 def attach_nbd(socket_path, nbd_name, pid_path):
     def get_nbds():
-        return filter(lambda nbd: nbd.startswith('nbd'), os.listdir('/dev'))
+        return list(filter(lambda nbd: nbd.startswith('nbd'), os.listdir('/dev')))
 
     nbds = get_nbds()
     if not nbds:
@@ -201,7 +204,7 @@ def attach_nbd(socket_path, nbd_name, pid_path):
                 remove_file(pid_path)
 
             targeted_pid = get_nbd_pid(nbd_path)
-            if (pid is not None and pid == targeted_pid) or targeted_pid < 0:
+            if (pid is not None and pid == targeted_pid) or (targeted_pid is not None and targeted_pid < 0):
                 run_or_ignore(lambda: disconnect_nbd(nbd_path))
 
             continue
