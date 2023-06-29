@@ -16,7 +16,21 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
+from __future__ import print_function
+
+import sys
+
+if sys.version_info > (3,):
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    def get_header(handler, header):
+        return handler.headers.get(header)
+else:
+    from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
+
+    def get_header(handler, header):
+        return handler.headers.getheader(header)
+
 from io import BytesIO
 import argparse
 import errno
@@ -27,7 +41,6 @@ import socket
 import stat
 import struct
 import subprocess
-import sys
 import threading
 import time
 import traceback
@@ -57,7 +70,8 @@ def check_bindable(port):
     p = subprocess.Popen(
         ['lsof', '-i:' + str(port), '-Fp'],
         stdout=subprocess.PIPE,
-        close_fds=True
+        close_fds=True,
+        universal_newlines=True
     )
 
     stdout, stderr = p.communicate()
@@ -69,7 +83,7 @@ def check_bindable(port):
     return False
 
 def eprint(str):
-    print >> sys.stderr, OUTPUT_PREFIX + str
+    print(OUTPUT_PREFIX + str, file=sys.stderr)
 
 def is_drbd_device(path):
     try:
@@ -252,7 +266,7 @@ def MakeRequestHandler(disk_fd, is_block_device):
             size = req_range[1]
 
             try:
-                encoding = self.headers.getheader('Transfer-Encoding')
+                encoding = get_header(self, 'Transfer-Encoding')
                 if encoding is not None:
                     if encoding != 'chunked':
                         raise Exception('Unsupported encoding: `{}`.'.format(encoding))

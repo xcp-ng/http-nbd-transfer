@@ -96,7 +96,8 @@ def get_dmesg_output():
         ['dmesg'],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        close_fds=True
+        close_fds=True,
+        universal_newlines=True
     )
 
     limit = 30
