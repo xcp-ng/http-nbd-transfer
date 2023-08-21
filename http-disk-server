@@ -133,6 +133,8 @@ def close_device(fd):
                 return
             if e.errno == errno.EINTR:
                 continue
+            raise
+        except Exception as e:
             eprint('Cannot close fd {}: `{}`.'.format(fd, e))
             return
 
@@ -441,12 +443,13 @@ def run_server(disk, ip, port):
                     httpd = None
             except Exception as e:
                 eprint('Failed to close server: {}.'.format(e))
-            close_device(disk_fd)
+            finally:
+                close_device(disk_fd)
 
-            # Make sure we notify for server startup if the device cannot be opened.
-            # Or in case of exception during the first open call. It can be triggered
-            # if we failed to open the volume due to concurrent DRBD calls.
-            emit_server_ready()
+                # Make sure we notify for server startup if the device cannot be opened.
+                # Or in case of exception during the first open call. It can be triggered
+                # if we failed to open the volume due to concurrent DRBD calls.
+                emit_server_ready()
 
 # ==============================================================================
 
