@@ -29,9 +29,6 @@ nbdkit-multi-http-plugin.so:
 install: nbdkit-multi-http-plugin.so
 	mkdir -p $(DESTDIR)$(PREFIX)/lib64/nbdkit/plugins/
 	cp nbdkit-multi-http-plugin.so $(DESTDIR)$(PREFIX)/lib64/nbdkit/plugins/
-	mkdir -p $(DESTDIR)$(PREFIX)/bin/
-	cp nbd-http-server $(DESTDIR)$(PREFIX)/bin/
-	cp http-disk-server $(DESTDIR)$(PREFIX)/bin/
 
 clean:
 	$(RM) *.so
