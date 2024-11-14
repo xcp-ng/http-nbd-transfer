@@ -247,10 +247,6 @@ def run_nbd_server(socket_path, nbd_name, urls, device_size):
 
     try:
         nbd = attach_nbd(socket_path, nbd_name, pid_path)
-        # Flush to ensure we can read output (like NBD device used)
-        # in another process without waiting.
-        sys.stdout.flush()
-        sys.stderr.flush()
         while True:
             try:
                 if SIGTERM_RECEIVED:
