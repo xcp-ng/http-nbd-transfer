@@ -26,6 +26,6 @@ setup(
     author_email="ronan.abhamon@vates.tech",
     url="https://vates.tech",
     license="GPLv3",
-    py_modules=["http-disk-server", "nbd-http-server"],
+    py_modules=["http_disk_server", "nbd_http_server"],
     scripts=["scripts/http-disk-server", "scripts/nbd-http-server"]
 )
