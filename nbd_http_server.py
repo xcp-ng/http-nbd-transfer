@@ -26,7 +26,7 @@ import signal
 import subprocess
 import sys
 
-WORKING_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '')
+WORKING_DIR = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), '')
 NBDKIT_PLUGIN = WORKING_DIR + '../lib64/nbdkit/plugins/nbdkit-multi-http-plugin.so'
 
 # ==============================================================================
