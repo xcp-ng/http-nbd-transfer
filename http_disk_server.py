@@ -425,6 +425,10 @@ def run_server(disk, ip, port):
                 disk_fd = open_device(disk, retry=False)
             else:
                 disk_fd = open_device(disk)
+
+            if SIGTERM_RECEIVED:
+                break
+
             is_block_device = stat.S_ISBLK(os.fstat(disk_fd).st_mode)
 
             HandlerClass = MakeRequestHandler(disk_fd, is_block_device)
