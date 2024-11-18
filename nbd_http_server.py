@@ -25,6 +25,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 
 WORKING_DIR = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), '')
 NBDKIT_PLUGIN = WORKING_DIR + '../lib64/nbdkit/plugins/nbdkit-multi-http-plugin.so'
@@ -65,8 +66,14 @@ def run_or_ignore(fun):
 
 # -----------------------------------------------------------------------------
 
+THREAD_PRINT_LOCK = threading.Lock()
+
+def thread_print(str):
+    with THREAD_PRINT_LOCK:
+        print(str)
+
 def eprint(str):
-    print(OUTPUT_PREFIX + str, file=sys.stderr)
+    thread_print(OUTPUT_PREFIX + str)
 
 # -----------------------------------------------------------------------------
 
@@ -242,7 +249,39 @@ def run_nbd_server(socket_path, nbd_name, urls, device_size):
     ]
     if device_size is not None:
         arguments.append('device-size=' + str(device_size))
-    server = subprocess.Popen(arguments)
+
+    # Start nbdkit process.
+    server = subprocess.Popen(
+        arguments,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        universal_newlines=True,
+        env=dict(os.environ, PYTHONUNBUFFERED='1')
+    )
+
+    # Wait for init.
+    try:
+        with timeout(10):
+            while server.poll() is None:
+                line = server.stdout.readline().rstrip('\n')
+                if not line:
+                    continue
+                print(line)
+                if 'written pidfile' in line:
+                    break
+    except Exception as e:
+        raise Exception('Failed to start nbdkit server: {}.'.format(e))
+
+    # Continue to log server messages in stdout.
+    def log_server_messages():
+        while server.poll() is None:
+            line = server.stdout.readline().rstrip('\n')
+            if line:
+                thread_print(line)
+
+    server_stdout_thread = threading.Thread(target=log_server_messages)
+    server_stdout_thread.start()
+
     nbd = None
 
     try:
@@ -261,6 +300,7 @@ def run_nbd_server(socket_path, nbd_name, urls, device_size):
             nbd.disconnect()
         server.send_signal(signal.SIGQUIT)
         server.wait()
+        server_stdout_thread.join()
         clean_paths()
 
 # ==============================================================================
