@@ -137,7 +137,8 @@ def start_http_server(backing_path):
         arguments,
         stdout=sys.stdout,
         stderr=subprocess.STDOUT,
-        preexec_fn=os.setsid
+        preexec_fn=os.setsid,
+        env=dict(os.environ, PYTHONUNBUFFERED='1')
     )
 
 # ------------------------------------------------------------------------------
@@ -160,7 +161,8 @@ def start_nbd_server(volume_name, device_size):
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         preexec_fn=os.setsid,
-        universal_newlines=True
+        universal_newlines=True,
+        env=dict(os.environ, PYTHONUNBUFFERED='1')
     )
 
     try:
