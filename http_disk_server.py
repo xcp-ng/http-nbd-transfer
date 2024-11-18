@@ -216,6 +216,7 @@ def MakeRequestHandler(disk_fd, is_block_device):
         def get_content_size(self):
             return get_device_size(self.disk_fd)
 
+        # Ignore broken pipe for python2 version.
         # See: https://stackoverflow.com/questions/6063416/python-basehttpserver-how-do-i-catch-trap-broken-pipe-errors#answer-14355079
         def finish(self):
             try:
@@ -348,7 +349,22 @@ def MakeRequestHandler(disk_fd, is_block_device):
             self.end_headers()
             response = BytesIO()
             response.write(b'Ok.')
-            self.wfile.write(response.getvalue())
+
+            # Write response for all python versions.
+            # Handle broken pipe error for python3 version.
+            try:
+                self.wfile.write(response.getvalue())
+            except Exception:
+                if sys.version_info > (3,):
+                    from builtins import BrokenPipeError
+                    try:
+                        raise
+                    except BrokenPipeError:
+                        # The client closed the connection too early,
+                        # so we should ignore the error.
+                        pass
+                else:
+                    raise
 
     return RequestHandler
 
