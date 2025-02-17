@@ -97,7 +97,7 @@ class CommandException(Exception):
         )
 
 def call(cmd, expected_returncode=0):
-    dprint('Call command: {}'.format(cmd))
+    eprint('Call command: {}'.format(cmd))
     p = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -223,7 +223,7 @@ def attach_nbd(socket_path, nbd_name, pid_path):
             continue
 
         # NBD is now attached, try to modify scheduler + return NBD object.
-        dprint('NBD `{}` is now attached.'.format(nbd_path))
+        eprint('NBD `{}` is now attached.'.format(nbd_path))
         try:
             with open('/sys/block/' + nbd + '/queue/scheduler', 'w') as fd:
                 fd.write('none')
@@ -295,11 +295,11 @@ def run_nbd_server(socket_path, nbd_name, urls, device_size):
         while True:
             try:
                 if SIGTERM_RECEIVED:
-                    dprint('SIGTERM received. Exiting server...')
+                    eprint('SIGTERM received. Exiting server...')
                     break
                 signal.pause()
             except KeyboardInterrupt:
-                dprint('Exiting server...')
+                eprint('Exiting server...')
                 break
     finally:
         if nbd:

@@ -110,7 +110,7 @@ def open_device(dev_path, retry=True):
     while not SIGTERM_RECEIVED:
         try:
             disk_fd = os.open(dev_path, os.O_RDWR)
-            dprint('Disk open!')
+            eprint('Disk open!')
             return disk_fd
         except OSError as e:
             if e.errno == errno.EAGAIN or e.errno == errno.EINTR:
