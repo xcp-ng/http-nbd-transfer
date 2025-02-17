@@ -110,7 +110,7 @@ def open_device(dev_path, retry=True):
     while not SIGTERM_RECEIVED:
         try:
             disk_fd = os.open(dev_path, os.O_RDWR)
-            eprint('Disk open!')
+            dprint('Disk open!')
             return disk_fd
         except OSError as e:
             if e.errno == errno.EAGAIN or e.errno == errno.EINTR:
@@ -293,7 +293,7 @@ def MakeRequestHandler(disk_fd, is_block_device):
             size = min(req_range[1], REQ_LIMIT_SIZE)
 
             try:
-                eprint('GET [{}]: Read {}B at {}.'.format(self.client_address[0], size, offset))
+                dprint('GET [{}]: Read {}B at {}.'.format(self.client_address[0], size, offset))
                 os.lseek(self.disk_fd, offset, os.SEEK_SET)
                 chunk = os.read(self.disk_fd, size)
             except Exception as e:
@@ -338,7 +338,7 @@ def MakeRequestHandler(disk_fd, is_block_device):
                     if len(chunk) < size:
                         raise Exception('Truncated chunk!')
 
-                eprint('PUT [{}]: Write {}B at {}.'.format(self.client_address[0], len(chunk), offset))
+                dprint('PUT [{}]: Write {}B at {}.'.format(self.client_address[0], len(chunk), offset))
                 os.lseek(self.disk_fd, offset, os.SEEK_SET)
                 os.write(self.disk_fd, chunk)
                 if self.is_block_device:
