@@ -79,7 +79,7 @@ def eprint(str):
 
 def dprint(str):
     if VERBOSE:
-        print(OUTPUT_PREFIX + str, file=sys.stderr)
+        eprint(str)
 
 # -----------------------------------------------------------------------------
 
