@@ -331,7 +331,7 @@ def main():
         help='Force the device size, instead of using an HTTP server to get it'
     )
     parser.add_argument(
-        '-v', '--verbose', action='store_true', dest='verbose', type=bool, default=False, required=False,
+        '-v', '--verbose', action='store_true', dest='verbose', default=False, required=False,
         help='Enable verbose logging'
     )
 
