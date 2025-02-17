@@ -63,6 +63,8 @@ OUTPUT_PREFIX = ''
 SIGTERM_RECEIVED = False
 STARTING_SERVER = True
 
+VERBOSE = False
+
 def handle_sigterm(*args):
     global SIGTERM_RECEIVED
     SIGTERM_RECEIVED = True
@@ -87,6 +89,10 @@ def check_bindable(port):
 
 def eprint(str):
     print(OUTPUT_PREFIX + str, file=sys.stderr)
+
+def dprint(str):
+    if VERBOSE:
+        print(OUTPUT_PREFIX + str, file=sys.stderr)
 
 def is_drbd_device(path):
     try:
@@ -488,10 +494,16 @@ def main():
         '--port', action='store', dest='port', type=int, default=8000, required=False,
         help='Port to use'
     )
+    parser.add_argument(
+        '-v', '--verbose', action='store_true', dest='verbose', default=False, required=False,
+        help='Enable verbose logging'
+    )
 
     args = parser.parse_args()
     global OUTPUT_PREFIX
     OUTPUT_PREFIX = '[' + os.path.basename(os.path.realpath(args.disk)) + '] '
+    global VERBOSE
+    VERBOSE = args.verbose
     signal.signal(signal.SIGTERM, handle_sigterm)
     run_server(args.disk, args.ip, args.port)
 
