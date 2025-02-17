@@ -130,8 +130,7 @@ def start_http_server(backing_path):
         '--disk',
         backing_path,
         '--port',
-        HTTP_PORT,
-        '--verbose'
+        HTTP_PORT
     ]
 
     return subprocess.Popen(
@@ -154,8 +153,7 @@ def start_nbd_server(volume_name, device_size):
         '--urls',
         'http://{}:{}'.format(socket.gethostname(), HTTP_PORT),
         '--device-size',
-        str(device_size),
-        '--verbose'
+        str(device_size)
     ]
 
     nbd_server = subprocess.Popen(
