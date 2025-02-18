@@ -278,6 +278,13 @@ def MakeRequestHandler(disk_fd, is_block_device):
             self.send_response(416)
             self.end_headers()
 
+        def log_message(self, format, *args):
+            dprint('%s - - [%s] %s\n' % (
+                self.address_string() if sys.version_info > (3,) else self.client_address[0],
+                self.log_date_time_string(),
+                format % args
+            ))
+
         def do_HEAD(self):
             self.send_response(200)
             self.send_header('Accept-Ranges', 'bytes')
