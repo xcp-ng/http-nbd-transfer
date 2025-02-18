@@ -280,10 +280,17 @@ def run_nbd_server(socket_path, nbd_name, urls, device_size):
 
     # Continue to log server messages in stdout.
     def log_server_messages():
+        verbose_keywords = [
+            'pread',
+            'pwrite'
+        ]
         while server.poll() is None:
             line = server.stdout.readline().rstrip('\n')
             if line:
-                thread_print(line)
+                if any(keyword in line for keyword in verbose_keywords):
+                    dprint(line)
+                else:
+                    thread_print(line)
 
     server_stdout_thread = threading.Thread(target=log_server_messages)
     server_stdout_thread.start()
