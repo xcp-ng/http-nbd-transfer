@@ -278,12 +278,18 @@ def MakeRequestHandler(disk_fd, is_block_device):
             self.send_response(416)
             self.end_headers()
 
-        def log_message(self, format, *args):
-            dprint('%s - - [%s] %s\n' % (
+        def _log_message(self, func, format, *args):
+            func('%s - - [%s] %s\n' % (
                 self.address_string() if sys.version_info > (3,) else self.client_address[0],
                 self.log_date_time_string(),
                 format % args
             ))
+
+        def log_message(self, format, *args):
+            self._log_message(dprint, format, *args)
+
+        def log_error(self, format, *args):
+            self._log_message(eprint, format, *args)
 
         def do_HEAD(self):
             self.send_response(200)
