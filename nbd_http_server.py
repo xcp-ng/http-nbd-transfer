@@ -280,14 +280,17 @@ def run_nbd_server(socket_path, nbd_name, urls, device_size):
 
     # Continue to log server messages in stdout.
     def log_server_messages():
+        nbdkit_log_prefix = r'nbdkit: multihttp\[\d+\]: debug: '
         verbose_keywords = (
             'pread',
             'pwrite'
         )
+        verbose_pattern = re.compile(r'{}({})'.format(nbdkit_log_prefix, '|'.join(verbose_keywords)))
+
         while server.poll() is None:
             line = server.stdout.readline().rstrip('\n')
             if line:
-                if any(keyword in line for keyword in verbose_keywords):
+                if any(verbose_pattern.match(line) for keyword in verbose_keywords):
                     dprint(line)
                 else:
                     thread_print(line)
