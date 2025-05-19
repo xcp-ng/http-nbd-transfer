@@ -63,6 +63,8 @@ OUTPUT_PREFIX = ''
 SIGTERM_RECEIVED = False
 STARTING_SERVER = True
 
+VERBOSE = False
+
 def handle_sigterm(*args):
     global SIGTERM_RECEIVED
     SIGTERM_RECEIVED = True
@@ -87,6 +89,10 @@ def check_bindable(port):
 
 def eprint(str):
     print(OUTPUT_PREFIX + str, file=sys.stderr)
+
+def dprint(str):
+    if VERBOSE:
+        eprint(str)
 
 def is_drbd_device(path):
     try:
@@ -272,6 +278,19 @@ def MakeRequestHandler(disk_fd, is_block_device):
             self.send_response(416)
             self.end_headers()
 
+        def _log_message(self, func, format, *args):
+            func('%s - - [%s] %s\n' % (
+                self.address_string() if sys.version_info > (3,) else self.client_address[0],
+                self.log_date_time_string(),
+                format % args
+            ))
+
+        def log_message(self, format, *args):
+            self._log_message(dprint, format, *args)
+
+        def log_error(self, format, *args):
+            self._log_message(eprint, format, *args)
+
         def do_HEAD(self):
             self.send_response(200)
             self.send_header('Accept-Ranges', 'bytes')
@@ -287,7 +306,7 @@ def MakeRequestHandler(disk_fd, is_block_device):
             size = min(req_range[1], REQ_LIMIT_SIZE)
 
             try:
-                eprint('GET [{}]: Read {}B at {}.'.format(self.client_address[0], size, offset))
+                dprint('GET [{}]: Read {}B at {}.'.format(self.client_address[0], size, offset))
                 os.lseek(self.disk_fd, offset, os.SEEK_SET)
                 chunk = os.read(self.disk_fd, size)
             except Exception as e:
@@ -332,7 +351,7 @@ def MakeRequestHandler(disk_fd, is_block_device):
                     if len(chunk) < size:
                         raise Exception('Truncated chunk!')
 
-                eprint('PUT [{}]: Write {}B at {}.'.format(self.client_address[0], len(chunk), offset))
+                dprint('PUT [{}]: Write {}B at {}.'.format(self.client_address[0], len(chunk), offset))
                 os.lseek(self.disk_fd, offset, os.SEEK_SET)
                 os.write(self.disk_fd, chunk)
                 if self.is_block_device:
@@ -488,10 +507,16 @@ def main():
         '--port', action='store', dest='port', type=int, default=8000, required=False,
         help='Port to use'
     )
+    parser.add_argument(
+        '-v', '--verbose', action='store_true', dest='verbose', default=False, required=False,
+        help='Enable verbose logging'
+    )
 
     args = parser.parse_args()
     global OUTPUT_PREFIX
     OUTPUT_PREFIX = '[' + os.path.basename(os.path.realpath(args.disk)) + '] '
+    global VERBOSE
+    VERBOSE = args.verbose
     signal.signal(signal.SIGTERM, handle_sigterm)
     run_server(args.disk, args.ip, args.port)
 

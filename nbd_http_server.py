@@ -68,12 +68,18 @@ def run_or_ignore(fun):
 
 THREAD_PRINT_LOCK = threading.Lock()
 
+VERBOSE = False
+
 def thread_print(str):
     with THREAD_PRINT_LOCK:
         print(str)
 
 def eprint(str):
     thread_print(OUTPUT_PREFIX + str)
+
+def dprint(str):
+    if VERBOSE:
+        eprint(str)
 
 # -----------------------------------------------------------------------------
 
@@ -274,10 +280,20 @@ def run_nbd_server(socket_path, nbd_name, urls, device_size):
 
     # Continue to log server messages in stdout.
     def log_server_messages():
+        nbdkit_log_prefix = r'nbdkit: multihttp\[\d+\]: debug: '
+        verbose_keywords = (
+            'pread',
+            'pwrite'
+        )
+        verbose_pattern = re.compile(r'{}({})'.format(nbdkit_log_prefix, '|'.join(verbose_keywords)))
+
         while server.poll() is None:
             line = server.stdout.readline().rstrip('\n')
             if line:
-                thread_print(line)
+                if any(verbose_pattern.match(line) for keyword in verbose_keywords):
+                    dprint(line)
+                else:
+                    thread_print(line)
 
     server_stdout_thread = threading.Thread(target=log_server_messages)
     server_stdout_thread.start()
@@ -324,10 +340,16 @@ def main():
         '--device-size', action='store', dest='device_size', default=None, required=False, type=int,
         help='Force the device size, instead of using an HTTP server to get it'
     )
+    parser.add_argument(
+        '-v', '--verbose', action='store_true', dest='verbose', default=False, required=False,
+        help='Enable verbose logging'
+    )
 
     args = parser.parse_args()
     global OUTPUT_PREFIX
     OUTPUT_PREFIX = '[' + args.nbd_name + '] '
+    global VERBOSE
+    VERBOSE = args.verbose
     try:
         signal.signal(signal.SIGTERM, handle_sigterm)
         run_nbd_server(args.socket_path, args.nbd_name, args.urls, args.device_size)
