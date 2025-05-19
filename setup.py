@@ -20,7 +20,7 @@ from setuptools import setup
 
 setup(
     name="http-nbd-transfer",
-    version="1.5.0",
+    version="1.6.0",
     description="Set of tools to transfer NBD requests to an HTTP server",
     author="Ronan Abhamon <ronan.abhamon@vates.tech>",
     author_email="ronan.abhamon@vates.tech",
