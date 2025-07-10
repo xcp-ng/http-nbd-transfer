@@ -22,6 +22,7 @@ from contextlib import contextmanager
 import argparse
 import errno
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -290,7 +291,7 @@ def run_nbd_server(socket_path, nbd_name, urls, device_size):
         while server.poll() is None:
             line = server.stdout.readline().rstrip('\n')
             if line:
-                if any(verbose_pattern.match(line) for keyword in verbose_keywords):
+                if verbose_pattern.match(line):
                     dprint(line)
                 else:
                     thread_print(line)
