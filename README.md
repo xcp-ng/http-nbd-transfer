@@ -8,6 +8,7 @@ Set of tools to transfer NBD requests to an HTTP server:
 
 ## Dependencies
 
+- `python` >= 3.6
 - `gcc` & `make` to build sources
 - `curl` devel C lib
 - `nbdkit` devel C lib
@@ -73,14 +74,9 @@ You should have a similar trace on the first host:
 Now you can use a script like this in the secondary to write a request in the NBD, this last one will be transfered to the remote:
 
 ```
-> python
-Python 2.7.5 (default, Jul 13 2018, 13:06:57)
-[GCC 4.8.5 20150623 (Red Hat 4.8.5-28)] on linux2
-Type "help", "copyright", "credits" or "license" for more information.
+> python3
 >>> import os
 >>> dev = os.open('/dev/nbd15', os.O_RDWR | os.O_SYNC)
->>> os.lseek(dev, 4096 * 20, os.SEEK_SET)
-81920
->>> os.write(dev, "toto")
+>>> os.pwrite(dev, b'toto', 4096 * 20)
 4
 ```

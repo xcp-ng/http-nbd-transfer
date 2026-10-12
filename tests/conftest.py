@@ -239,7 +239,7 @@ def env(request):
 
 # ------------------------------------------------------------------------------
 
-class Device(object):
+class Device:
     __slots__ = ('_buffer', '_read_buffer', '_fd', '_capacity')
 
     def __init__(self, buffer, fd):
@@ -301,7 +301,7 @@ class MirrorDevice(Device):
     __slots__ = ('_fd_mirror', )
 
     def __init__(self, device, fd_mirror):
-        super(MirrorDevice, self).__init__(device._buffer, device._fd)
+        super().__init__(device._buffer, device._fd)
         self._fd_mirror = fd_mirror
 
     # Because O_DIRECT is used in mirroring mode, we must ensure buffer addrs,
@@ -309,13 +309,13 @@ class MirrorDevice(Device):
     def check_read(self, count, offset):
         assert count & SECTOR_MASK == 0
         assert offset & SECTOR_MASK == 0
-        super(MirrorDevice, self).check_read(count, offset)
+        super().check_read(count, offset)
 
     def check_write(self, chunk, offset):
         # Note: Assume chunk addr is correctly aligned.
         assert len(chunk) & SECTOR_MASK == 0
         assert offset & SECTOR_MASK == 0
-        super(MirrorDevice, self).check_write(chunk, offset)
+        super().check_write(chunk, offset)
 
     def _check_read_unsafe(self, count, expected_chunk):
         assert count & SECTOR_MASK == 0
