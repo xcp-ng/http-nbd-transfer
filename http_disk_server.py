@@ -31,7 +31,6 @@ else:
     def get_header(handler, header):
         return handler.headers.getheader(header)
 
-from io import BytesIO
 import argparse
 import errno
 import fcntl
@@ -208,6 +207,13 @@ def get_device_size(fd):
 
 def MakeRequestHandler(disk_fd, is_block_device):
     class RequestHandler(BaseHTTPRequestHandler):
+        # Use HTTP 1.1.
+        protocol_version = 'HTTP/1.1'
+
+        # Headers and body are sent with separate `send` calls: without this, Nagle's
+        # algorithm and delayed ACKs can add ~40ms to each small response.
+        disable_nagle_algorithm = True
+
         def __init__(self, *args, **kwargs):
             # Note: We cannot use this call in python 2:
             # super(RequestHandler, self).__init__(*args, **kwargs)
@@ -233,11 +239,23 @@ def MakeRequestHandler(disk_fd, is_block_device):
                 pass
             self.rfile.close()
 
+        def send_response(self, code, message=None):
+            # The server is single-threaded: a persistent connection would block the other
+            # clients, so the connection is closed after each response.
+            BaseHTTPRequestHandler.send_response(self, code, message)
+            self.send_header('Connection', 'close')
+            self.close_connection = True
+
+        def send_response_and_close(self, code):
+            # No body is sent, so `Content-Length` is mandatory in HTTP/1.1.
+            self.send_response(code)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+
         def parse_range(self):
             req_range = self.headers.get('range')
             if req_range is None:
-                self.send_response(400)
-                self.end_headers()
+                self.send_response_and_close(400)
                 return
 
             if req_range.startswith('bytes'):
@@ -253,14 +271,12 @@ def MakeRequestHandler(disk_fd, is_block_device):
                         pass
 
             # Return error: "Range Not Satisfiable".
-            self.send_response(416)
-            self.end_headers()
+            self.send_response_and_close(416)
 
         def parse_content_range(self):
             req_range = self.headers.get('Content-Range')
             if req_range is None:
-                self.send_response(400)
-                self.end_headers()
+                self.send_response_and_close(400)
                 return
 
             if req_range.startswith('bytes'):
@@ -275,8 +291,7 @@ def MakeRequestHandler(disk_fd, is_block_device):
                     pass
 
             # Return error: "Range Not Satisfiable".
-            self.send_response(416)
-            self.end_headers()
+            self.send_response_and_close(416)
 
         def _log_message(self, func, format, *args):
             func('%s - - [%s] %s\n' % (
@@ -311,8 +326,7 @@ def MakeRequestHandler(disk_fd, is_block_device):
                 chunk = os.read(self.disk_fd, size)
             except Exception as e:
                 eprint('Can\'t do GET: `{}`.'.format(e))
-                self.send_response(500)
-                self.end_headers()
+                self.send_response_and_close(500)
                 return
 
             self.send_response(206)
@@ -340,6 +354,10 @@ def MakeRequestHandler(disk_fd, is_block_device):
                     while True:
                         chunk_size = int(self.rfile.readline().strip(), 16)
                         if not chunk_size:
+                            # Consume empty line after chunk size, otherwise the next request
+                            # of a persistent connection would start with garbage.
+                            while self.rfile.readline().strip():
+                                pass
                             break
                         chunk.extend(self.rfile.read(chunk_size))
                         self.rfile.readline()
@@ -360,19 +378,18 @@ def MakeRequestHandler(disk_fd, is_block_device):
                     os.fsync(self.disk_fd)
             except Exception as e:
                 eprint('Can\'t do PUT: `{}`.'.format(e))
-                self.send_response(500)
-                self.end_headers()
+                self.send_response_and_close(500)
                 return
 
+            body = b'Ok.'
             self.send_response(200)
+            self.send_header('Content-Length', str(len(body)))
             self.end_headers()
-            response = BytesIO()
-            response.write(b'Ok.')
 
             # Write response for all python versions.
             # Handle broken pipe error for python3 version.
             try:
-                self.wfile.write(response.getvalue())
+                self.wfile.write(body)
             except Exception:
                 if sys.version_info > (3,):
                     from builtins import BrokenPipeError
