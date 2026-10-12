@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 #
 # Copyright (C) 2022  Vates SAS
@@ -16,34 +16,20 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-from __future__ import print_function
-
-import sys
-
-if sys.version_info > (3,):
-    from http.server import BaseHTTPRequestHandler, HTTPServer
-
-    def get_header(handler, header):
-        return handler.headers.get(header)
-else:
-    from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
-
-    def get_header(handler, header):
-        return handler.headers.getheader(header)
-
 import argparse
 import errno
 import fcntl
 import json
 import os
 import signal
-import socket
 import stat
 import struct
 import subprocess
+import sys
 import threading
 import time
 import traceback
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 BLKGETSIZE64 = 0x80081272
 BLKFLSBUF = (0x12 << 8) + 97  # Flush buffer cache.
@@ -215,29 +201,12 @@ def MakeRequestHandler(disk_fd, is_block_device):
         disable_nagle_algorithm = True
 
         def __init__(self, *args, **kwargs):
-            # Note: We cannot use this call in python 2:
-            # super(RequestHandler, self).__init__(*args, **kwargs)
-            # > TypeError: must be type, not classobj
-            #
-            # The base class of `BaseHTTPRequestHandler` uses an old def:
-            # "class BaseRequestHandler:"
             self.disk_fd = disk_fd
             self.is_block_device = is_block_device
-            BaseHTTPRequestHandler.__init__(self, *args, **kwargs)
+            super().__init__(*args, **kwargs)
 
         def get_content_size(self):
             return get_device_size(self.disk_fd)
-
-        # Ignore broken pipe for python2 version.
-        # See: https://stackoverflow.com/questions/6063416/python-basehttpserver-how-do-i-catch-trap-broken-pipe-errors#answer-14355079
-        def finish(self):
-            try:
-                if not self.wfile.closed:
-                    self.wfile.flush()
-                    self.wfile.close()
-            except socket.error:
-                pass
-            self.rfile.close()
 
         def send_response(self, code, message=None):
             # The server is single-threaded: a persistent connection would block the other
@@ -295,7 +264,7 @@ def MakeRequestHandler(disk_fd, is_block_device):
 
         def _log_message(self, func, format, *args):
             func('%s - - [%s] %s\n' % (
-                self.address_string() if sys.version_info > (3,) else self.client_address[0],
+                self.address_string(),
                 self.log_date_time_string(),
                 format % args
             ))
@@ -345,7 +314,7 @@ def MakeRequestHandler(disk_fd, is_block_device):
             size = req_range[1]
 
             try:
-                encoding = get_header(self, 'Transfer-Encoding')
+                encoding = self.headers.get('Transfer-Encoding')
                 if encoding is not None:
                     if encoding != 'chunked':
                         raise Exception('Unsupported encoding: `{}`.'.format(encoding))
@@ -386,21 +355,11 @@ def MakeRequestHandler(disk_fd, is_block_device):
             self.send_header('Content-Length', str(len(body)))
             self.end_headers()
 
-            # Write response for all python versions.
-            # Handle broken pipe error for python3 version.
             try:
                 self.wfile.write(body)
-            except Exception:
-                if sys.version_info > (3,):
-                    from builtins import BrokenPipeError
-                    try:
-                        raise
-                    except BrokenPipeError:
-                        # The client closed the connection too early,
-                        # so we should ignore the error.
-                        pass
-                else:
-                    raise
+            except BrokenPipeError:
+                # The client closed the connection too early, so we should ignore the error.
+                pass
 
     return RequestHandler
 

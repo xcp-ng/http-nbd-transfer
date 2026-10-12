@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 #
 # Copyright (C) 2022  Vates SAS
@@ -15,8 +15,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-
-from __future__ import print_function
 
 from contextlib import contextmanager
 import argparse
@@ -117,7 +115,7 @@ def call(cmd, expected_returncode=0):
 
 class TimeoutException(Exception):
     def __init__(self):
-        super(Exception, self).__init__('timeout')
+        super().__init__('timeout')
 
 @contextmanager
 def timeout(seconds):
