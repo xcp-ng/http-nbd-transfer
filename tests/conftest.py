@@ -3,11 +3,15 @@ import io
 import os
 import random
 import re
+import shutil
 import signal
 import socket
 import string
 import subprocess
 import sys
+import tempfile
+from collections import namedtuple
+from pathlib import Path
 
 import pytest
 
@@ -15,11 +19,7 @@ from tests import buffer
 
 # ==============================================================================
 
-WORKING_DIR = os.path.dirname(os.path.abspath(__file__)) + '/'
-
 REG_NBD_PATH = re.compile("NBD `(/dev/nbd[0-9]+)` is now attached.$")
-
-HTTP_PORT = '8080'
 
 SECTOR_SIZE = 512
 SECTOR_MASK = SECTOR_SIZE - 1
@@ -124,13 +124,13 @@ def kill_server(server):
 
 # ------------------------------------------------------------------------------
 
-def start_http_server(backing_path):
+def start_http_server(env, backing_path):
     arguments = [
-        WORKING_DIR + 'bin/http-disk-server',
+        env.bin_dir / 'http-disk-server',
         '--disk',
         backing_path,
         '--port',
-        HTTP_PORT
+        env.http_port
     ]
 
     return subprocess.Popen(
@@ -143,15 +143,15 @@ def start_http_server(backing_path):
 
 # ------------------------------------------------------------------------------
 
-def start_nbd_server(volume_name, device_size):
+def start_nbd_server(env, volume_name, device_size):
     arguments = [
-        WORKING_DIR + 'bin/nbd-http-server',
+        env.bin_dir / 'nbd-http-server',
         '--socket-path',
-        '/{}/{}.socket'.format(WORKING_DIR, volume_name),
+        env.work_dir / (volume_name + '.socket'),
         '--nbd-name',
         volume_name,
         '--urls',
-        'http://{}:{}'.format(socket.gethostname(), HTTP_PORT),
+        'http://{}:{}'.format(socket.gethostname(), env.http_port),
         '--device-size',
         str(device_size)
     ]
@@ -186,6 +186,58 @@ def start_nbd_server(volume_name, device_size):
 # ==============================================================================
 # Fixtures.
 # ==============================================================================
+
+Env = namedtuple('Env', ['bin_dir', 'http_port', 'work_dir'])
+
+def pytest_addoption(parser):
+    parser.addoption(
+        '--bin-dir',
+        default=None,
+        help=(
+            'directory of http-disk-server and nbd-http-server '
+            '(default: `bin_dir` of pytest.ini)'
+        )
+    )
+    parser.addoption(
+        '--http-port',
+        default=None,
+        help='port of the HTTP server (default: `http_port` of pytest.ini)'
+    )
+    parser.addini(
+        'bin_dir',
+        'directory of http-disk-server and nbd-http-server, relative to pytest.ini'
+    )
+    parser.addini(
+        'http_port',
+        'port of the HTTP server',
+        default='8080'
+    )
+
+def get_bin_dir(config):
+    bin_dir = config.getoption('--bin-dir')
+    if bin_dir:
+        return Path(bin_dir)
+
+    bin_dir = config.getini('bin_dir')
+    if not bin_dir:
+        raise pytest.UsageError('`bin_dir` is not set in pytest.ini, use --bin-dir')
+
+    # The rootdir is the directory of pytest.ini. An absolute `bin_dir` is kept as is.
+    return Path(str(config.rootdir)) / bin_dir
+
+@pytest.fixture(scope='session')
+def env(request):
+    # Private directory for the sockets and disk images, nothing is written next to the tests.
+    work_dir = Path(tempfile.mkdtemp(prefix='http-nbd-transfer-'))
+    request.addfinalizer(lambda: shutil.rmtree(work_dir, ignore_errors=True))
+
+    return Env(
+        bin_dir=get_bin_dir(request.config),
+        http_port=request.config.getoption('--http-port') or request.config.getini('http_port'),
+        work_dir=work_dir
+    )
+
+# ------------------------------------------------------------------------------
 
 class Device(object):
     __slots__ = ('_buffer', '_read_buffer', '_fd', '_capacity')
@@ -282,27 +334,27 @@ class MirrorDevice(Device):
 
 # ------------------------------------------------------------------------------
 
-def create_random_backing_file(request, open_flags):
+def create_random_backing_file(request, env, open_flags):
     random_buffer = generate_random_buffer(size_kib=RANDOM_BUFFER_SIZE_KIB)
 
     http_server = None
     nbd_server = None
     fd = None
-    backing_path = WORKING_DIR + 'image-' + generate_random_string(32) + '.bin'
+    backing_path = env.work_dir / ('image-' + generate_random_string(32) + '.bin')
 
     def clean():
         kill_server(nbd_server)
         kill_server(http_server)
 
         call_ignore(lambda: os.close(fd))
-        call_ignore(lambda: os.remove(backing_path))
+        call_ignore(lambda: backing_path.unlink())
 
     try:
         with open(backing_path, 'wb') as f:
             f.write(random_buffer)
 
-        http_server = start_http_server(backing_path)
-        (nbd_server, nbd_path) = start_nbd_server('disk-test', RANDOM_BUFFER_SIZE_KIB * 1024)
+        http_server = start_http_server(env, backing_path)
+        (nbd_server, nbd_path) = start_nbd_server(env, 'disk-test', RANDOM_BUFFER_SIZE_KIB * 1024)
 
         fd = os.open(nbd_path, open_flags)
     except Exception:
@@ -313,23 +365,25 @@ def create_random_backing_file(request, open_flags):
     request.addfinalizer(clean)
     return device
 
-@pytest.fixture(scope='class')
-def random_backing_file(request):
-    return create_random_backing_file(request, os.O_RDWR)
+# ------------------------------------------------------------------------------
 
 @pytest.fixture(scope='class')
-def random_backing_file_with_o_direct(request):
-    return create_random_backing_file(request, os.O_RDWR | os.O_DIRECT)
+def random_backing_file(request, env):
+    return create_random_backing_file(request, env, os.O_RDWR)
 
 @pytest.fixture(scope='class')
-def backing_file_mirror(request, random_backing_file_with_o_direct):
+def random_backing_file_with_o_direct(request, env):
+    return create_random_backing_file(request, env, os.O_RDWR | os.O_DIRECT)
+
+@pytest.fixture(scope='class')
+def backing_file_mirror(request, env, random_backing_file_with_o_direct):
     nbd_server = None
 
     def clean():
         kill_server(nbd_server)
 
     try:
-        (nbd_server, nbd_path) = start_nbd_server('disk-test-mirror', RANDOM_BUFFER_SIZE_KIB * 1024)
+        (nbd_server, nbd_path) = start_nbd_server(env, 'disk-test-mirror', RANDOM_BUFFER_SIZE_KIB * 1024)
         fd = os.open(nbd_path, os.O_RDWR | os.O_DIRECT)
     except Exception:
         clean()
