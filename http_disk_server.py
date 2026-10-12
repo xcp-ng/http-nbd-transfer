@@ -234,7 +234,7 @@ def MakeRequestHandler(disk_fd, is_block_device):
                         values = req_range[1:].lstrip().split('-')
                         begin = int(values[0])
                         end = int(values[1])
-                        if begin <= end and end - begin < self.get_content_size():
+                        if begin <= end < self.get_content_size():
                             return [begin, end - begin + 1]
                     except Exception:
                         pass
@@ -254,7 +254,7 @@ def MakeRequestHandler(disk_fd, is_block_device):
                     values = req_range.split('-')
                     begin = int(values[0])
                     end = int(values[1].split('/')[0].strip())
-                    if begin <= end and end - begin < self.get_content_size():
+                    if begin <= end < self.get_content_size():
                         return [begin, end - begin + 1]
                 except Exception:
                     pass
