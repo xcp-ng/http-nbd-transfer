@@ -85,7 +85,7 @@ def dprint(message: str) -> None:
 
 # ------------------------------------------------------------------------------
 
-class CommandException(Exception):
+class CommandError(Exception):
     def __init__(self, code: int, cmd: str, stdout: str, stderr: str) -> None:
         self.code = code
         self.cmd = cmd
@@ -110,19 +110,19 @@ def call(cmd: List[str], expected_returncode: int = 0) -> str:
     stdout, stderr = p.communicate()
 
     if p.returncode != expected_returncode:
-        raise CommandException(p.returncode, str(cmd), stdout.strip(), stderr.strip())
+        raise CommandError(p.returncode, str(cmd), stdout.strip(), stderr.strip())
     return stdout
 
 # ==============================================================================
 
-class TimeoutException(Exception):
+class SignalTimeoutError(Exception):
     def __init__(self) -> None:
         super().__init__("timeout")
 
 @contextlib.contextmanager
 def timeout(seconds: int) -> Iterator[None]:
     def handler(_signum: int, _frame: Optional[FrameType]) -> NoReturn:
-        raise TimeoutException
+        raise SignalTimeoutError
 
     old_handler = signal.signal(signal.SIGALRM, handler)
 
@@ -138,7 +138,7 @@ def timeout(seconds: int) -> Iterator[None]:
 def get_nbd_pid(nbd_path: str) -> Optional[int]:
     try:
         call(["nbd-client", "-c", nbd_path], expected_returncode=1)
-    except CommandException as e:
+    except CommandError as e:
         try:
             return int(e.stdout)
         except ValueError:
