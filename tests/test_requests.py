@@ -41,7 +41,7 @@ class TestRequests:
 
         i = 0
         while i < 10:
-            print("Loop {}".format(i))
+            print(f"Loop {i}")
             offset = random.randint(0, random_backing_file.capacity)
             offset = (offset + (chunk_size - 1)) & ~(chunk_size - 1)
 
@@ -64,7 +64,7 @@ class TestRequests:
 
         i = 0
         while i < 10:
-            print("Loop {}".format(i))
+            print(f"Loop {i}")
             chunk_size = random.randint(min_chunk_size, max_chunk_size)
             offset = random.randint(0, random_backing_file.capacity)
 
