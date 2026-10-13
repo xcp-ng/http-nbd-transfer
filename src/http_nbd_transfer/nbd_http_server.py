@@ -73,7 +73,7 @@ VERBOSE = False
 
 def thread_print(message: str) -> None:
     with THREAD_PRINT_LOCK:
-        print(message)
+        print(message)  # noqa: T201
 
 def eprint(message: str) -> None:
     thread_print(OUTPUT_PREFIX + message)
@@ -270,7 +270,7 @@ def run_nbd_server(socket_path: str, nbd_name: str, urls: str, device_size: Opti
                 line = server_stdout.readline().rstrip("\n")
                 if not line:
                     continue
-                print(line)
+                print(line)  # noqa: T201
                 if "written pidfile" in line:
                     break
     except Exception as e:
