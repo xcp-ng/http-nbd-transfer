@@ -54,7 +54,6 @@ DRBD_OPEN_SLEEP = 1.0  # In seconds.
 OUTPUT_PREFIX = ""
 
 SIGTERM_RECEIVED = False
-STARTING_SERVER = True
 
 VERBOSE = False
 
@@ -453,11 +452,13 @@ def run_server(disk: str, ip: str, port: int) -> None:  # noqa: C901
     # The goal of this function is to notify the caller and to be sure to always have
     # a running server before sending requests. We try to prevent HTTP errors like
     # "Destination Host Unreachable".
+    starting_server = True
+
     def emit_server_ready() -> None:
-        global STARTING_SERVER
-        if STARTING_SERVER:
+        nonlocal starting_server
+        if starting_server:
             eprint("Server ready!")
-            STARTING_SERVER = False
+            starting_server = False
 
     httpd: Optional[HttpDiskServer] = None
     httpd_thread: Optional[threading.Thread] = None
@@ -468,7 +469,7 @@ def run_server(disk: str, ip: str, port: int) -> None:  # noqa: C901
             break
 
         try:
-            if STARTING_SERVER:
+            if starting_server:
                 # It's useful in the case of a DRBD to check if the path
                 # is openable, mainly when this param is set:
                 # "DrbdOptions/Resource/auto-promote-timeout".
@@ -492,7 +493,7 @@ def run_server(disk: str, ip: str, port: int) -> None:  # noqa: C901
             httpd_thread = threading.Thread(target=httpd.serve_forever)
             httpd_thread.start()
 
-            if STARTING_SERVER:
+            if starting_server:
                 httpd.wait_startup()
                 # We emit only after effective startup.
                 emit_server_ready()
@@ -506,7 +507,7 @@ def run_server(disk: str, ip: str, port: int) -> None:  # noqa: C901
             eprint(f"Unhandled exception: `{e}`.")
             eprint(traceback.format_exc())
             eprint("Restarting server...")
-            if not STARTING_SERVER:
+            if not starting_server:
                 time.sleep(1)
         finally:
             try:
