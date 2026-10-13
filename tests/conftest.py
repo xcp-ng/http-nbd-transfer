@@ -44,7 +44,7 @@ class TimeoutException(Exception):
     pass
 
 def timeout_call(timeoutseconds: int, function: Callable[..., T], *arguments: object) -> T:
-    def handler(signum: int, frame: Optional[FrameType]) -> NoReturn:
+    def handler(_signum: int, _frame: Optional[FrameType]) -> NoReturn:
         raise TimeoutException()
     signal.signal(signal.SIGALRM, handler)
     signal.alarm(timeoutseconds)
@@ -67,7 +67,7 @@ def generate_random_buffer(size_kib: int) -> bytearray:
     assert isinstance(size_kib, int)
 
     random_buffer = bytearray()
-    for i in range(size_kib):
+    for _i in range(size_kib):
         chunk = os.urandom(1024)
         random_buffer.extend(chunk)
     return random_buffer
