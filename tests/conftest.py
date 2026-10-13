@@ -126,7 +126,7 @@ def kill_server(server: Optional[subprocess.Popen]) -> None:
             os.killpg(os.getpgid(server.pid), signal.SIGTERM)
             os.waitpid(server.pid, 0)
         except Exception as e:
-            print("Failed to kill: `{}`.".format(e))
+            print(f"Failed to kill: `{e}`.")
 
 # ------------------------------------------------------------------------------
 
@@ -157,7 +157,7 @@ def start_nbd_server(env: "Env", volume_name: str, device_size: int) -> Tuple[su
         "--nbd-name",
         volume_name,
         "--urls",
-        "http://{}:{}".format(socket.gethostname(), env.http_port),
+        f"http://{socket.gethostname()}:{env.http_port}",
         "--device-size",
         str(device_size)
     ]
@@ -186,10 +186,10 @@ def start_nbd_server(env: "Env", volume_name: str, device_size: int) -> Tuple[su
             raise Exception("NBD path is empty!")
     except Exception:
         kill_server(nbd_server)
-        print("Failed to get NBD path (dmesg): {}".format(get_dmesg_output()))
+        print(f"Failed to get NBD path (dmesg): {get_dmesg_output()}")
         raise
 
-    print("Used NBD path: `{}`.".format(nbd_path))
+    print(f"Used NBD path: `{nbd_path}`.")
     return (nbd_server, nbd_path)
 
 # ==============================================================================
@@ -266,7 +266,7 @@ class Device:
         max_count = self._capacity - offset
         if count > max_count:
             count = max_count
-        print("Device: Read {}B at {}.".format(count, offset))
+        print(f"Device: Read {count}B at {offset}.")
         expected_chunk = buffer(self._buffer, offset, count)
         self._check_read_unsafe(count, expected_chunk)
 
@@ -277,7 +277,7 @@ class Device:
         if count > max_count:
             count = max_count
             chunk = buffer(chunk, 0, count)
-        print("Device: Write {}B at {}.".format(count, offset))
+        print(f"Device: Write {count}B at {offset}.")
         self._buffer[offset:offset + count] = chunk
         os.write(self._fd, chunk)
 

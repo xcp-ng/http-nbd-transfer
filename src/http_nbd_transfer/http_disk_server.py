@@ -76,7 +76,7 @@ def check_bindable(port: int) -> bool:
         return True
 
     pid = stdout[1:].rstrip() # remove 'p' before pid
-    eprint("Cannot use port {}, already used by: {}.".format(port, pid))
+    eprint(f"Cannot use port {port}, already used by: {pid}.")
     return False
 
 def eprint(str: str) -> None:
@@ -90,13 +90,13 @@ def is_drbd_device(path: str) -> bool:
     try:
         st = os.stat(path)
     except Exception as e:
-        eprint("Failed to execute `stat` call on `{}`: {}.".format(path, e))
+        eprint(f"Failed to execute `stat` call on `{path}`: `{e}`.")
         return False
     return stat.S_ISBLK(st.st_mode) and os.major(st.st_rdev) == DRBD_MAJOR
 
 def open_device(dev_path: str, *, retry: bool = True) -> Optional[int]:
     def cannot_open(e: OSError) -> NoReturn:
-        raise Exception("Cannot open device `{}`: `{}`.".format(dev_path, e))
+        raise Exception(f"Cannot open device `{dev_path}`: `{e}`.")
 
     is_drbd = None
     while not SIGTERM_RECEIVED:
@@ -134,7 +134,7 @@ def close_device(fd: Optional[int]) -> None:
                 continue
             raise
         except Exception as e:
-            eprint("Cannot close fd {}: `{}`.".format(fd, e))
+            eprint(f"Cannot close fd {fd}: `{e}`.")
             return
 
 def is_openable(dev_path: str) -> bool:
@@ -172,7 +172,7 @@ def is_openable(dev_path: str) -> bool:
             if connection["peer-role"] == "Primary":
                 return False
     except Exception as e:
-        eprint("Failed to read DRBD res status: `{}`.".format(e))
+        eprint(f"Failed to read DRBD res status: `{e}`.")
         return False
 
     return True
@@ -208,10 +208,10 @@ def get_device_size(fd: int) -> int:
             break
         except OSError as e:
             if e.errno != errno.EINTR:
-                eprint("Can't get device size: `{}`.".format(e))
+                eprint(f"Can't get device size: `{e}`.")
                 raise
         except Exception as e:
-            eprint("Can't get device size (generic): `{}`.".format(e))
+            eprint(f"Can't get device size (generic): `{e}`.")
             raise
     return disk_capacity
 
@@ -321,18 +321,18 @@ def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPR
             size = min(req_range[1], REQ_LIMIT_SIZE)
 
             try:
-                dprint("GET [{}]: Read {}B at {}.".format(self.client_address[0], size, offset))
+                dprint(f"GET [{self.client_address[0]}]: Read {size}B at {offset}.")
                 chunk = pread(self.disk_fd, size, offset)
                 if len(chunk) != size:
                     # Raise and close connection in case of short read, we must strictly avoid reusing it.
-                    raise Exception("Short read ({}/{} bytes)!".format(len(chunk), size))
+                    raise Exception(f"Short read ({len(chunk)}/{size} bytes)!")
             except Exception as e:
-                eprint("Can't do GET: `{}`.".format(e))
+                eprint(f"Can't do GET: `{e}`.")
                 self.send_response_and_close(500)
                 return
 
             self.send_response(206)
-            self.send_header("Content-Range", "bytes {}-{}/{}".format(offset, size - 1, self.get_content_size()))
+            self.send_header("Content-Range", f"bytes {offset}-{size - 1}/{self.get_content_size()}")
             self.send_header("Content-Length", str(int(size)))
             self.end_headers()
 
@@ -351,7 +351,7 @@ def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPR
                 encoding = self.headers.get("Transfer-Encoding")
                 if encoding is not None:
                     if encoding != "chunked":
-                        raise Exception("Unsupported encoding: `{}`.".format(encoding))
+                        raise Exception(f"Unsupported encoding: `{encoding}`.")
 
                     chunk = bytearray()
                     while True:
@@ -372,14 +372,14 @@ def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPR
                     if len(chunk) < size:
                         raise Exception("Truncated chunk!")
 
-                dprint("PUT [{}]: Write {}B at {}.".format(self.client_address[0], len(chunk), offset))
+                dprint(f"PUT [{self.client_address[0]}]: Write {len(chunk)}B at {offset}.")
                 pwrite(self.disk_fd, chunk, offset)
                 if self.is_block_device:
                     fcntl.ioctl(self.disk_fd, BLKFLSBUF)
                 else:
                     os.fsync(self.disk_fd)
             except Exception as e:
-                eprint("Can't do PUT: `{}`.".format(e))
+                eprint(f"Can't do PUT: `{e}`.")
                 self.send_response_and_close(500)
                 return
 
@@ -508,7 +508,7 @@ def run_server(disk: str, ip: str, port: int) -> None:
             eprint("Exiting server...")
             break
         except Exception as e:
-            eprint("Unhandled exception: `{}`.".format(e))
+            eprint(f"Unhandled exception: `{e}`.")
             eprint(traceback.format_exc())
             eprint("Restarting server...")
             if not STARTING_SERVER:
@@ -524,7 +524,7 @@ def run_server(disk: str, ip: str, port: int) -> None:
                     httpd.server_close()
                     httpd = None
             except Exception as e:
-                eprint("Failed to close server: {}.".format(e))
+                eprint(f"Failed to close server: {e}.")
             finally:
                 close_device(disk_fd)
 
