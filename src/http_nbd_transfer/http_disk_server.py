@@ -57,7 +57,7 @@ STARTING_SERVER = True
 
 VERBOSE = False
 
-def handle_sigterm(*args: object) -> None:
+def handle_sigterm(*_args: object) -> None:
     global SIGTERM_RECEIVED
     SIGTERM_RECEIVED = True
 
@@ -71,7 +71,7 @@ def check_bindable(port: int) -> bool:
         universal_newlines=True
     )
 
-    stdout, stderr = p.communicate()
+    stdout, _stderr = p.communicate()
     if p.returncode:
         return True
 
@@ -159,7 +159,7 @@ def is_openable(dev_path: str) -> bool:
     except OSError:
         return False # Binary not installed.
 
-    stdout, stderr = p.communicate()
+    stdout, _stderr = p.communicate()
     if p.returncode:
         return False
 

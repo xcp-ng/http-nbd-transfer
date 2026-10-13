@@ -38,7 +38,7 @@ OUTPUT_PREFIX = ""
 
 SIGTERM_RECEIVED = False
 
-def handle_sigterm(*args: object) -> None:
+def handle_sigterm(*_args: object) -> None:
     global SIGTERM_RECEIVED
     SIGTERM_RECEIVED = True
 
@@ -121,7 +121,7 @@ class TimeoutException(Exception):
 
 @contextmanager
 def timeout(seconds: int) -> Iterator[None]:
-    def handler(signum: int, frame: Optional[FrameType]) -> NoReturn:
+    def handler(_signum: int, _frame: Optional[FrameType]) -> NoReturn:
         raise TimeoutException
 
     old_handler = signal.signal(signal.SIGALRM, handler)
