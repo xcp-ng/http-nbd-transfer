@@ -37,11 +37,10 @@ NBDKIT_PLUGIN = WORKING_DIR / ".." / "lib64" / "nbdkit" / "plugins" / "nbdkit-mu
 
 OUTPUT_PREFIX = ""
 
-SIGTERM_RECEIVED = False
+SIGTERM_EVENT = threading.Event()
 
 def handle_sigterm(*_args: object) -> None:
-    global SIGTERM_RECEIVED
-    SIGTERM_RECEIVED = True
+    SIGTERM_EVENT.set()
 
 # ------------------------------------------------------------------------------
 
@@ -302,7 +301,7 @@ def run_nbd_server(socket_path: str, nbd_name: str, urls: str, device_size: Opti
         nbd = attach_nbd(socket_path, nbd_name, pid_path)
         while True:
             try:
-                if SIGTERM_RECEIVED:
+                if SIGTERM_EVENT.is_set():
                     eprint("SIGTERM received. Exiting server...")
                     break
                 signal.pause()
