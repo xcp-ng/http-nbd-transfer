@@ -51,14 +51,18 @@ DRBD_OPEN_SLEEP = 1.0  # In seconds.
 
 # ------------------------------------------------------------------------------
 
-OUTPUT_PREFIX = ""
-
 SIGTERM_EVENT = threading.Event()
-
-VERBOSE = False
 
 def handle_sigterm(*_args: object) -> None:
     SIGTERM_EVENT.set()
+
+# ------------------------------------------------------------------------------
+
+class LogConfig:
+    prefix = ""
+    verbose = False
+
+LOG_CONFIG = LogConfig()
 
 # ------------------------------------------------------------------------------
 
@@ -79,10 +83,10 @@ def check_bindable(port: int) -> bool:
     return False
 
 def eprint(message: str) -> None:
-    print(OUTPUT_PREFIX + message, file=sys.stderr)  # noqa: T201
+    print(LOG_CONFIG.prefix + message, file=sys.stderr)  # noqa: T201
 
 def dprint(message: str) -> None:
-    if VERBOSE:
+    if LOG_CONFIG.verbose:
         eprint(message)
 
 def is_drbd_device(path: str) -> bool:
@@ -551,9 +555,7 @@ def main() -> None:
     )
 
     args = parser.parse_args()
-    global OUTPUT_PREFIX
-    OUTPUT_PREFIX = "[" + Path(args.disk).resolve().name + "] "
-    global VERBOSE
-    VERBOSE = args.verbose
+    LOG_CONFIG.prefix = "[" + Path(args.disk).resolve().name + "] "
+    LOG_CONFIG.verbose = args.verbose
     signal.signal(signal.SIGTERM, handle_sigterm)
     run_server(args.disk, args.ip, args.port)

@@ -35,8 +35,6 @@ from http_nbd_transfer.typing import Callable, Iterator, List, NoReturn, Optiona
 WORKING_DIR = Path(sys.argv[0]).absolute().parent
 NBDKIT_PLUGIN = WORKING_DIR / ".." / "lib64" / "nbdkit" / "plugins" / "nbdkit-multi-http-plugin.so"
 
-OUTPUT_PREFIX = ""
-
 SIGTERM_EVENT = threading.Event()
 
 def handle_sigterm(*_args: object) -> None:
@@ -68,17 +66,21 @@ def run_or_ignore(fun: Callable[[], object]) -> None:
 
 THREAD_PRINT_LOCK = threading.Lock()
 
-VERBOSE = False
+class LogConfig:
+    prefix = ""
+    verbose = False
+
+LOG_CONFIG = LogConfig()
 
 def thread_print(message: str) -> None:
     with THREAD_PRINT_LOCK:
         print(message)  # noqa: T201
 
 def eprint(message: str) -> None:
-    thread_print(OUTPUT_PREFIX + message)
+    thread_print(LOG_CONFIG.prefix + message)
 
 def dprint(message: str) -> None:
-    if VERBOSE:
+    if LOG_CONFIG.verbose:
         eprint(message)
 
 # ------------------------------------------------------------------------------
@@ -343,10 +345,8 @@ def main() -> None:
     )
 
     args = parser.parse_args()
-    global OUTPUT_PREFIX
-    OUTPUT_PREFIX = "[" + args.nbd_name + "] "
-    global VERBOSE
-    VERBOSE = args.verbose
+    LOG_CONFIG.prefix = "[" + args.nbd_name + "] "
+    LOG_CONFIG.verbose = args.verbose
     try:
         signal.signal(signal.SIGTERM, handle_sigterm)
         run_nbd_server(args.socket_path, args.nbd_name, args.urls, args.device_size)
