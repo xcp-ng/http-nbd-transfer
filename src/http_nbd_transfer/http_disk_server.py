@@ -81,7 +81,7 @@ def check_bindable(port: int) -> bool:
     return False
 
 def eprint(message: str) -> None:
-    print(OUTPUT_PREFIX + message, file=sys.stderr)
+    print(OUTPUT_PREFIX + message, file=sys.stderr)  # noqa: T201
 
 def dprint(message: str) -> None:
     if VERBOSE:
