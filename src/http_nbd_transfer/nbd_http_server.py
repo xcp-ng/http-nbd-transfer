@@ -16,8 +16,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-from contextlib import contextmanager
 import argparse
+from contextlib import contextmanager
 import errno
 import os
 import re
@@ -25,77 +25,81 @@ import signal
 import subprocess
 import sys
 import threading
+from types import FrameType
+
+from http_nbd_transfer.typing import Callable, Iterator, List, NoReturn, Optional, override
+
+# ==============================================================================
 
 WORKING_DIR = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), '')
 NBDKIT_PLUGIN = WORKING_DIR + '../lib64/nbdkit/plugins/nbdkit-multi-http-plugin.so'
-
-# ==============================================================================
 
 OUTPUT_PREFIX = ''
 
 SIGTERM_RECEIVED = False
 
-def handle_sigterm(*args):
+def handle_sigterm(*args: object) -> None:
     global SIGTERM_RECEIVED
     SIGTERM_RECEIVED = True
 
-# -----------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
-def pid_exists(pid):
+def pid_exists(pid: int) -> bool:
     try:
         os.kill(pid, 0)
     except OSError:
         return False
     return True
 
-# -----------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
-def remove_file(path):
+def remove_file(path: str) -> None:
     try:
         os.remove(path)
     except OSError as e:
         if e.errno != errno.ENOENT:
             raise e
 
-def run_or_ignore(fun):
+def run_or_ignore(fun: Callable[[], object]) -> None:
     try:
         fun()
     except Exception:
         pass
 
-# -----------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 THREAD_PRINT_LOCK = threading.Lock()
 
 VERBOSE = False
 
-def thread_print(str):
+def thread_print(str: str) -> None:
     with THREAD_PRINT_LOCK:
         print(str)
 
-def eprint(str):
+def eprint(str: str) -> None:
     thread_print(OUTPUT_PREFIX + str)
 
-def dprint(str):
+def dprint(str: str) -> None:
     if VERBOSE:
         eprint(str)
 
-# -----------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 class CommandException(Exception):
-    def __init__(self, code, cmd, stdout, stderr):
+    def __init__(self, code: int, cmd: str, stdout: str, stderr: str) -> None:
         self.code = code
         self.cmd = cmd
         self.stdout = stdout
         self.stderr = stderr
         Exception.__init__(self, os.strerror(abs(code)))
 
-    def __str__(self):
+    @override
+    def __str__(self) -> str:
         return 'Command exception: `{}` (code: `{}`, reason: `{}`)'.format(
             self.cmd, self.code, self.stderr
         )
 
-def call(cmd, expected_returncode=0):
+def call(cmd: List[str], expected_returncode: int = 0) -> str:
     eprint('Call command: {}'.format(cmd))
     p = subprocess.Popen(
         cmd,
@@ -114,12 +118,12 @@ def call(cmd, expected_returncode=0):
 # ==============================================================================
 
 class TimeoutException(Exception):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__('timeout')
 
 @contextmanager
-def timeout(seconds):
-    def handler(signum, frame):
+def timeout(seconds: int) -> Iterator[None]:
+    def handler(signum: int, frame: Optional[FrameType]) -> NoReturn:
         raise TimeoutException
 
     old_handler = signal.signal(signal.SIGALRM, handler)
@@ -133,7 +137,7 @@ def timeout(seconds):
 
 # ==============================================================================
 
-def get_nbd_pid(nbd_path):
+def get_nbd_pid(nbd_path: str) -> Optional[int]:
     try:
         call(['nbd-client', '-c', nbd_path], expected_returncode=1)
     except CommandException as e:
@@ -143,24 +147,24 @@ def get_nbd_pid(nbd_path):
             return -1
     return None
 
-def disconnect_nbd(nbd_path):
+def disconnect_nbd(nbd_path: str) -> None:
     call(['nbd-client', '-d', nbd_path])
 
 class Nbd:
     __slots__ = ('name', 'nbd')
 
-    def __init__(self, nbd, name):
+    def __init__(self, nbd: str, name: str) -> None:
         self.nbd = nbd
         self.name = name
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         try:
             disconnect_nbd('/dev/' + self.nbd)
         except Exception as e:
             eprint('Failed to disconnect NBD {}: `{}`.'.format(self.nbd, e))
 
-def attach_nbd(socket_path, nbd_name, pid_path):
-    def get_nbds():
+def attach_nbd(socket_path: str, nbd_name: str, pid_path: str) -> Nbd:
+    def get_nbds() -> List[str]:
         return list(filter(lambda nbd: nbd.startswith('nbd'), os.listdir('/dev')))
 
     nbds = get_nbds()
@@ -233,10 +237,10 @@ def attach_nbd(socket_path, nbd_name, pid_path):
 
     raise Exception('Cannot attach `{}` to NBD.'.format(socket_path))
 
-def run_nbd_server(socket_path, nbd_name, urls, device_size):
+def run_nbd_server(socket_path: str, nbd_name: str, urls: str, device_size: Optional[int]) -> None:
     pid_path = '/var/run/nbd-{}.pid'.format(nbd_name)
 
-    def clean_paths():
+    def clean_paths() -> None:
         remove_file(socket_path)
         remove_file(pid_path)
 
@@ -263,12 +267,14 @@ def run_nbd_server(socket_path, nbd_name, urls, device_size):
         universal_newlines=True,
         env=dict(os.environ, PYTHONUNBUFFERED='1')
     )
+    server_stdout = server.stdout
+    assert server_stdout is not None
 
     # Wait for init.
     try:
         with timeout(10):
             while server.poll() is None:
-                line = server.stdout.readline().rstrip('\n')
+                line = server_stdout.readline().rstrip('\n')
                 if not line:
                     continue
                 print(line)
@@ -278,7 +284,7 @@ def run_nbd_server(socket_path, nbd_name, urls, device_size):
         raise Exception('Failed to start nbdkit server: {}.'.format(e))
 
     # Continue to log server messages in stdout.
-    def log_server_messages():
+    def log_server_messages() -> None:
         nbdkit_log_prefix = r'nbdkit: multihttp\[\d+\]: debug: '
         verbose_keywords = (
             'pread',
@@ -287,7 +293,7 @@ def run_nbd_server(socket_path, nbd_name, urls, device_size):
         verbose_pattern = re.compile(r'{}({})'.format(nbdkit_log_prefix, '|'.join(verbose_keywords)))
 
         while server.poll() is None:
-            line = server.stdout.readline().rstrip('\n')
+            line = server_stdout.readline().rstrip('\n')
             if line:
                 if verbose_pattern.match(line):
                     dprint(line)
@@ -320,7 +326,7 @@ def run_nbd_server(socket_path, nbd_name, urls, device_size):
 
 # ==============================================================================
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -355,6 +361,3 @@ def main():
     except Exception as e:
         eprint('Got exception: `{}`.'.format(e))
         exit(1)
-
-if __name__ == '__main__':
-    main()

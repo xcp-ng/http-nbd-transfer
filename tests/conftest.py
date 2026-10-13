@@ -1,6 +1,8 @@
+from collections import namedtuple
 import ctypes
 import io
 import os
+from pathlib import Path
 import random
 import re
 import shutil
@@ -10,12 +12,15 @@ import string
 import subprocess
 import sys
 import tempfile
-from collections import namedtuple
-from pathlib import Path
+from types import FrameType
 
 import pytest
 
 from tests import buffer
+
+from http_nbd_transfer.typing import Callable, List, NoReturn, Optional, override, Tuple, TypeVar, Union
+
+T = TypeVar('T')
 
 # ==============================================================================
 
@@ -30,7 +35,7 @@ RANDOM_BUFFER_SIZE_KIB = 16 * 1024
 # Helpers.
 # ==============================================================================
 
-def generate_random_string(length):
+def generate_random_string(length: int) -> str:
     return ''.join(random.choice(string.ascii_letters) for i in range(length))
 
 # ------------------------------------------------------------------------------
@@ -38,8 +43,8 @@ def generate_random_string(length):
 class TimeoutException(Exception):
     pass
 
-def timeout_call(timeoutseconds, function, *arguments):
-    def handler(signum, frame):
+def timeout_call(timeoutseconds: int, function: Callable[..., T], *arguments: object) -> T:
+    def handler(signum: int, frame: Optional[FrameType]) -> NoReturn:
         raise TimeoutException()
     signal.signal(signal.SIGALRM, handler)
     signal.alarm(timeoutseconds)
@@ -50,7 +55,7 @@ def timeout_call(timeoutseconds, function, *arguments):
 
 # ------------------------------------------------------------------------------
 
-def call_ignore(fun):
+def call_ignore(fun: Callable[[], object]) -> None:
     try:
         fun()
     except Exception:
@@ -58,7 +63,7 @@ def call_ignore(fun):
 
 # ------------------------------------------------------------------------------
 
-def generate_random_buffer(size_kib):
+def generate_random_buffer(size_kib: int) -> bytearray:
     assert isinstance(size_kib, int)
 
     random_buffer = bytearray()
@@ -67,7 +72,7 @@ def generate_random_buffer(size_kib):
         random_buffer.extend(chunk)
     return random_buffer
 
-def generate_aligned_buffer(size, alignment):
+def generate_aligned_buffer(size: int, alignment: int) -> 'ctypes.Array[ctypes.c_char]':
     assert isinstance(size, int)
     assert isinstance(alignment, int)
 
@@ -83,15 +88,15 @@ def generate_aligned_buffer(size, alignment):
     assert ctypes.addressof(aligned_buffer) % alignment == 0
     return aligned_buffer
 
-def generate_aligned_random_buffer(size_kib, alignment_b):
+def generate_aligned_random_buffer(size_kib: int, alignment_b: int) -> 'ctypes.Array[ctypes.c_char]':
     random_buffer = generate_aligned_buffer(size_kib * 1024, alignment_b)
     for i in range(size_kib):
-        random_buffer[i * 1024:(i + 1) * 1024] = os.urandom(1024)
+        buffer(random_buffer, i * 1024, 1024)[:] = os.urandom(1024)
     return random_buffer
 
 # ------------------------------------------------------------------------------
 
-def get_dmesg_output():
+def get_dmesg_output() -> str:
     p = subprocess.Popen(
         ['dmesg'],
         stdout=subprocess.PIPE,
@@ -99,9 +104,10 @@ def get_dmesg_output():
         close_fds=True,
         universal_newlines=True
     )
+    assert p.stdout is not None
 
     limit = 30
-    lines = []
+    lines: List[str] = []
     while True:
         line = p.stdout.readline()
         if not line:
@@ -114,7 +120,7 @@ def get_dmesg_output():
 
 # ------------------------------------------------------------------------------
 
-def kill_server(server):
+def kill_server(server: Optional[subprocess.Popen]) -> None:
     if server:
         try:
             os.killpg(os.getpgid(server.pid), signal.SIGTERM)
@@ -124,7 +130,7 @@ def kill_server(server):
 
 # ------------------------------------------------------------------------------
 
-def start_http_server(env, backing_path):
+def start_http_server(env: 'Env', backing_path: Path) -> subprocess.Popen:
     arguments = [
         env.bin_dir / 'http-disk-server',
         '--disk',
@@ -143,7 +149,7 @@ def start_http_server(env, backing_path):
 
 # ------------------------------------------------------------------------------
 
-def start_nbd_server(env, volume_name, device_size):
+def start_nbd_server(env: 'Env', volume_name: str, device_size: int) -> Tuple[subprocess.Popen, str]:
     arguments = [
         env.bin_dir / 'nbd-http-server',
         '--socket-path',
@@ -164,14 +170,17 @@ def start_nbd_server(env, volume_name, device_size):
         universal_newlines=True,
         env=dict(os.environ, PYTHONUNBUFFERED='1')
     )
+    nbd_server_stdout = nbd_server.stdout
+    assert nbd_server_stdout is not None
 
     try:
-        def get_nbd_path():
+        def get_nbd_path() -> Optional[str]:
             while nbd_server.poll() is None:
-                line = nbd_server.stdout.readline()
+                line = nbd_server_stdout.readline()
                 match = REG_NBD_PATH.search(line)
                 if match:
                     return match.group(1)
+            return None
         nbd_path = timeout_call(30, get_nbd_path)
         if nbd_path is None:
             raise Exception('NBD path is empty!')
@@ -189,7 +198,7 @@ def start_nbd_server(env, volume_name, device_size):
 
 Env = namedtuple('Env', ['bin_dir', 'http_port', 'work_dir'])
 
-def pytest_addoption(parser):
+def pytest_addoption(parser: 'pytest.Parser') -> None:
     parser.addoption(
         '--bin-dir',
         default=None,
@@ -213,7 +222,7 @@ def pytest_addoption(parser):
         default='8080'
     )
 
-def get_bin_dir(config):
+def get_bin_dir(config: 'pytest.Config') -> Path:
     bin_dir = config.getoption('--bin-dir')
     if bin_dir:
         return Path(bin_dir)
@@ -226,7 +235,7 @@ def get_bin_dir(config):
     return Path(str(config.rootdir)) / bin_dir
 
 @pytest.fixture(scope='session')
-def env(request):
+def env(request: 'pytest.FixtureRequest') -> Env:
     # Private directory for the sockets and disk images, nothing is written next to the tests.
     work_dir = Path(tempfile.mkdtemp(prefix='http-nbd-transfer-'))
     request.addfinalizer(lambda: shutil.rmtree(work_dir, ignore_errors=True))
@@ -242,17 +251,17 @@ def env(request):
 class Device:
     __slots__ = ('_buffer', '_read_buffer', '_fd', '_capacity')
 
-    def __init__(self, buffer, fd):
+    def __init__(self, buffer: bytearray, fd: int) -> None:
         self._buffer = buffer
         self._read_buffer = generate_aligned_random_buffer(len(buffer) // 1024, SECTOR_SIZE)
         self._fd = fd
         self._capacity = len(self._buffer)
 
     @property
-    def capacity(self):
+    def capacity(self) -> int:
         return self._capacity
 
-    def check_read(self, count, offset):
+    def check_read(self, count: int, offset: int) -> None:
         offset = self._seek(offset)
         max_count = self._capacity - offset
         if count > max_count:
@@ -261,7 +270,7 @@ class Device:
         expected_chunk = buffer(self._buffer, offset, count)
         self._check_read_unsafe(count, expected_chunk)
 
-    def check_write(self, chunk, offset):
+    def check_write(self, chunk: Union[bytes, memoryview], offset: int) -> None:
         offset = self._seek(offset)
         count = len(chunk)
         max_count = self._capacity - offset
@@ -272,52 +281,55 @@ class Device:
         self._buffer[offset:offset + count] = chunk
         os.write(self._fd, chunk)
 
-    def check_read_all(self):
+    def check_read_all(self) -> None:
         self.check_read(len(self._buffer), 0)
 
-    def _check_read_unsafe(self, count, expected_chunk):
+    def _check_read_unsafe(self, count: int, expected_chunk: memoryview) -> None:
         buffer_view = self._get_read_buffer_view(count)
         read_count = self._read(self._fd, buffer_view)
         assert buffer(buffer_view, 0, read_count) == expected_chunk
 
-    def _seek(self, offset):
+    def _seek(self, offset: int) -> int:
         if offset > self._capacity:
             offset = self._capacity
         self._seek_unsafe(offset)
         return offset
 
-    def _seek_unsafe(self, offset):
+    def _seek_unsafe(self, offset: int) -> None:
         os.lseek(self._fd, offset, os.SEEK_SET)
 
-    def _get_read_buffer_view(self, count):
+    def _get_read_buffer_view(self, count: int) -> 'ctypes.Array[ctypes.c_char]':
         return (ctypes.c_char * count).from_buffer(self._read_buffer)
 
     @staticmethod
-    def _read(fd, buffer):
+    def _read(fd: int, buffer: 'ctypes.Array[ctypes.c_char]') -> int:
         with io.FileIO(fd, closefd=False) as fio:
             return fio.readinto(buffer)
 
 class MirrorDevice(Device):
     __slots__ = ('_fd_mirror', )
 
-    def __init__(self, device, fd_mirror):
+    def __init__(self, device: Device, fd_mirror: int) -> None:
         super().__init__(device._buffer, device._fd)
         self._fd_mirror = fd_mirror
 
     # Because O_DIRECT is used in mirroring mode, we must ensure buffer addrs,
     # sizes and offsets are correctly aligned.
-    def check_read(self, count, offset):
+    @override
+    def check_read(self, count: int, offset: int) -> None:
         assert count & SECTOR_MASK == 0
         assert offset & SECTOR_MASK == 0
         super().check_read(count, offset)
 
-    def check_write(self, chunk, offset):
+    @override
+    def check_write(self, chunk: Union[bytes, memoryview], offset: int) -> None:
         # Note: Assume chunk addr is correctly aligned.
         assert len(chunk) & SECTOR_MASK == 0
         assert offset & SECTOR_MASK == 0
         super().check_write(chunk, offset)
 
-    def _check_read_unsafe(self, count, expected_chunk):
+    @override
+    def _check_read_unsafe(self, count: int, expected_chunk: memoryview) -> None:
         assert count & SECTOR_MASK == 0
         buffer_view = self._get_read_buffer_view(count)
         assert ctypes.addressof(buffer_view) & SECTOR_MASK == 0
@@ -328,13 +340,14 @@ class MirrorDevice(Device):
         read_count = self._read(self._fd_mirror, buffer_view)
         assert buffer(buffer_view, 0, read_count) == expected_chunk
 
-    def _seek_unsafe(self, offset):
+    @override
+    def _seek_unsafe(self, offset: int) -> None:
         os.lseek(self._fd, offset, os.SEEK_SET)
         os.lseek(self._fd_mirror, offset, os.SEEK_SET)
 
 # ------------------------------------------------------------------------------
 
-def create_random_backing_file(request, env, open_flags):
+def create_random_backing_file(request: 'pytest.FixtureRequest', env: Env, open_flags: int) -> Device:
     random_buffer = generate_random_buffer(size_kib=RANDOM_BUFFER_SIZE_KIB)
 
     http_server = None
@@ -342,11 +355,12 @@ def create_random_backing_file(request, env, open_flags):
     fd = None
     backing_path = env.work_dir / ('image-' + generate_random_string(32) + '.bin')
 
-    def clean():
+    def clean() -> None:
         kill_server(nbd_server)
         kill_server(http_server)
 
-        call_ignore(lambda: os.close(fd))
+        if fd is not None:
+            call_ignore(lambda: os.close(fd))
         call_ignore(lambda: backing_path.unlink())
 
     try:
@@ -368,18 +382,20 @@ def create_random_backing_file(request, env, open_flags):
 # ------------------------------------------------------------------------------
 
 @pytest.fixture(scope='class')
-def random_backing_file(request, env):
+def random_backing_file(request: 'pytest.FixtureRequest', env: Env) -> Device:
     return create_random_backing_file(request, env, os.O_RDWR)
 
 @pytest.fixture(scope='class')
-def random_backing_file_with_o_direct(request, env):
+def random_backing_file_with_o_direct(request: 'pytest.FixtureRequest', env: Env) -> Device:
     return create_random_backing_file(request, env, os.O_RDWR | os.O_DIRECT)
 
 @pytest.fixture(scope='class')
-def backing_file_mirror(request, env, random_backing_file_with_o_direct):
+def backing_file_mirror(
+    request: 'pytest.FixtureRequest', env: Env, random_backing_file_with_o_direct: Device
+) -> 'MirrorDevice':
     nbd_server = None
 
-    def clean():
+    def clean() -> None:
         kill_server(nbd_server)
 
     try:
@@ -394,5 +410,5 @@ def backing_file_mirror(request, env, random_backing_file_with_o_direct):
     return device
 
 @pytest.fixture(scope='class')
-def aligned_buffer():
+def aligned_buffer() -> 'ctypes.Array[ctypes.c_char]':
     return generate_aligned_buffer(RANDOM_BUFFER_SIZE_KIB * 1024, SECTOR_SIZE)
