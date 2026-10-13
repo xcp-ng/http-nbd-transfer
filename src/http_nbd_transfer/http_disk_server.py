@@ -44,13 +44,13 @@ BLKFLSBUF = (0x12 << 8) + 97  # Flush buffer cache.
 REQ_LIMIT_SIZE = 1024 * 1024 * 128  # In bytes.
 
 DRBD_MAJOR = 147
-DRBD_BY_RES_PATH = '/dev/drbd/by-res/'
+DRBD_BY_RES_PATH = "/dev/drbd/by-res/"
 
 DRBD_OPEN_SLEEP = 1.0  # In seconds.
 
 # ------------------------------------------------------------------------------
 
-OUTPUT_PREFIX = ''
+OUTPUT_PREFIX = ""
 
 SIGTERM_RECEIVED = False
 STARTING_SERVER = True
@@ -65,7 +65,7 @@ def handle_sigterm(*args: object) -> None:
 
 def check_bindable(port: int) -> bool:
     p = subprocess.Popen(
-        ['lsof', '-i:' + str(port), '-Fp'],
+        ["lsof", "-i:" + str(port), "-Fp"],
         stdout=subprocess.PIPE,
         close_fds=True,
         universal_newlines=True
@@ -76,7 +76,7 @@ def check_bindable(port: int) -> bool:
         return True
 
     pid = stdout[1:].rstrip() # remove 'p' before pid
-    eprint('Cannot use port {}, already used by: {}.'.format(port, pid))
+    eprint("Cannot use port {}, already used by: {}.".format(port, pid))
     return False
 
 def eprint(str: str) -> None:
@@ -90,19 +90,19 @@ def is_drbd_device(path: str) -> bool:
     try:
         st = os.stat(path)
     except Exception as e:
-        eprint('Failed to execute `stat` call on `{}`: {}.'.format(path, e))
+        eprint("Failed to execute `stat` call on `{}`: {}.".format(path, e))
         return False
     return stat.S_ISBLK(st.st_mode) and os.major(st.st_rdev) == DRBD_MAJOR
 
 def open_device(dev_path: str, *, retry: bool = True) -> Optional[int]:
     def cannot_open(e: OSError) -> NoReturn:
-        raise Exception('Cannot open device `{}`: `{}`.'.format(dev_path, e))
+        raise Exception("Cannot open device `{}`: `{}`.".format(dev_path, e))
 
     is_drbd = None
     while not SIGTERM_RECEIVED:
         try:
             disk_fd = os.open(dev_path, os.O_RDWR)
-            eprint('Disk open!')
+            eprint("Disk open!")
             return disk_fd
         except OSError as e:
             if e.errno == errno.EAGAIN or e.errno == errno.EINTR:
@@ -134,7 +134,7 @@ def close_device(fd: Optional[int]) -> None:
                 continue
             raise
         except Exception as e:
-            eprint('Cannot close fd {}: `{}`.'.format(fd, e))
+            eprint("Cannot close fd {}: `{}`.".format(fd, e))
             return
 
 def is_openable(dev_path: str) -> bool:
@@ -143,7 +143,7 @@ def is_openable(dev_path: str) -> bool:
 
     if dev_path.startswith(DRBD_BY_RES_PATH):
         prefix_len = len(DRBD_BY_RES_PATH)
-        res_name_end = dev_path.find('/', prefix_len)
+        res_name_end = dev_path.find("/", prefix_len)
         assert res_name_end != -1
         resource_name = dev_path[prefix_len:res_name_end]
     else:
@@ -151,7 +151,7 @@ def is_openable(dev_path: str) -> bool:
 
     try:
         p = subprocess.Popen(
-            ['drbdsetup', 'status', resource_name, '--json'],
+            ["drbdsetup", "status", resource_name, "--json"],
             stdout=subprocess.PIPE,
             close_fds=True,
             universal_newlines=True
@@ -168,11 +168,11 @@ def is_openable(dev_path: str) -> bool:
         if not conf:
             return False
 
-        for connection in conf[0]['connections']:
-            if connection['peer-role'] == 'Primary':
+        for connection in conf[0]["connections"]:
+            if connection["peer-role"] == "Primary":
                 return False
     except Exception as e:
-        eprint('Failed to read DRBD res status: `{}`.'.format(e))
+        eprint("Failed to read DRBD res status: `{}`.".format(e))
         return False
 
     return True
@@ -186,7 +186,7 @@ def pread(fd: int, size: int, offset: int) -> bytes:
         chunks.append(chunk)
         size -= len(chunk)
         offset += len(chunk)
-    return b''.join(chunks)
+    return b"".join(chunks)
 
 def pwrite(fd: int, data: Union[bytes, bytearray], offset: int) -> None:
     chunk = memoryview(data)
@@ -201,17 +201,17 @@ def get_device_size(fd: int) -> int:
         try:
             fd_stat = os.fstat(fd)
             if stat.S_ISBLK(fd_stat.st_mode):
-                buf = fcntl.ioctl(fd, BLKGETSIZE64, b' ' * 8)
-                disk_capacity = struct.unpack('L', buf)[0]
+                buf = fcntl.ioctl(fd, BLKGETSIZE64, b" " * 8)
+                disk_capacity = struct.unpack("L", buf)[0]
             else:
                 disk_capacity = fd_stat.st_size
             break
         except OSError as e:
             if e.errno != errno.EINTR:
-                eprint('Can\'t get device size: `{}`.'.format(e))
+                eprint("Can't get device size: `{}`.".format(e))
                 raise
         except Exception as e:
-            eprint('Can\'t get device size (generic): `{}`.'.format(e))
+            eprint("Can't get device size (generic): `{}`.".format(e))
             raise
     return disk_capacity
 
@@ -222,7 +222,7 @@ RequestType = Union[socket.socket, Tuple[bytes, socket.socket]]
 def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPRequestHandler]:
     class RequestHandler(BaseHTTPRequestHandler):
         # Use HTTP 1.1: TCP connections are reused and not directly closed.
-        protocol_version = 'HTTP/1.1'
+        protocol_version = "HTTP/1.1"
 
         # Headers and body are sent with separate `send` calls: without this, Nagle's
         # algorithm and delayed ACKs can add ~40ms to each small response.
@@ -243,22 +243,22 @@ def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPR
             # - Body not consumed.
             # - ...
             self.send_response(code)
-            self.send_header('Content-Length', '0')
-            self.send_header('Connection', 'close')
+            self.send_header("Content-Length", "0")
+            self.send_header("Connection", "close")
             self.end_headers()
             self.close_connection = True
 
         def parse_range(self) -> Optional[List[int]]:
-            req_range = self.headers.get('range')
+            req_range = self.headers.get("range")
             if req_range is None:
                 self.send_response_and_close(400)
                 return None
 
-            if req_range.startswith('bytes'):
+            if req_range.startswith("bytes"):
                 req_range = req_range[5:].strip()
-                if req_range.startswith('='):
+                if req_range.startswith("="):
                     try:
-                        values = req_range[1:].lstrip().split('-')
+                        values = req_range[1:].lstrip().split("-")
                         begin = int(values[0])
                         end = int(values[1])
                         if begin <= end < self.get_content_size():
@@ -271,17 +271,17 @@ def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPR
             return None
 
         def parse_content_range(self) -> Optional[List[int]]:
-            req_range = self.headers.get('Content-Range')
+            req_range = self.headers.get("Content-Range")
             if req_range is None:
                 self.send_response_and_close(400)
                 return None
 
-            if req_range.startswith('bytes'):
+            if req_range.startswith("bytes"):
                 req_range = req_range[5:].strip()
                 try:
-                    values = req_range.split('-')
+                    values = req_range.split("-")
                     begin = int(values[0])
-                    end = int(values[1].split('/')[0].strip())
+                    end = int(values[1].split("/")[0].strip())
                     if begin <= end < self.get_content_size():
                         return [begin, end - begin + 1]
                 except Exception:
@@ -292,7 +292,7 @@ def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPR
             return None
 
         def _log_message(self, func: Callable[[str], None], format: str, *args: object) -> None:
-            func('%s - - [%s] %s\n' % (
+            func("%s - - [%s] %s\n" % (
                 self.address_string(),
                 self.log_date_time_string(),
                 format % args
@@ -308,8 +308,8 @@ def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPR
 
         def do_HEAD(self) -> None:
             self.send_response(200)
-            self.send_header('Accept-Ranges', 'bytes')
-            self.send_header('Content-Length', str(self.get_content_size()))
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(self.get_content_size()))
             self.end_headers()
 
         def do_GET(self) -> None:
@@ -321,19 +321,19 @@ def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPR
             size = min(req_range[1], REQ_LIMIT_SIZE)
 
             try:
-                dprint('GET [{}]: Read {}B at {}.'.format(self.client_address[0], size, offset))
+                dprint("GET [{}]: Read {}B at {}.".format(self.client_address[0], size, offset))
                 chunk = pread(self.disk_fd, size, offset)
                 if len(chunk) != size:
                     # Raise and close connection in case of short read, we must strictly avoid reusing it.
-                    raise Exception('Short read ({}/{} bytes)!'.format(len(chunk), size))
+                    raise Exception("Short read ({}/{} bytes)!".format(len(chunk), size))
             except Exception as e:
-                eprint('Can\'t do GET: `{}`.'.format(e))
+                eprint("Can't do GET: `{}`.".format(e))
                 self.send_response_and_close(500)
                 return
 
             self.send_response(206)
-            self.send_header('Content-Range', 'bytes {}-{}/{}'.format(offset, size - 1, self.get_content_size()))
-            self.send_header('Content-Length', str(int(size)))
+            self.send_header("Content-Range", "bytes {}-{}/{}".format(offset, size - 1, self.get_content_size()))
+            self.send_header("Content-Length", str(int(size)))
             self.end_headers()
 
             self.wfile.write(chunk)
@@ -348,10 +348,10 @@ def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPR
 
             chunk: Union[bytes, bytearray]
             try:
-                encoding = self.headers.get('Transfer-Encoding')
+                encoding = self.headers.get("Transfer-Encoding")
                 if encoding is not None:
-                    if encoding != 'chunked':
-                        raise Exception('Unsupported encoding: `{}`.'.format(encoding))
+                    if encoding != "chunked":
+                        raise Exception("Unsupported encoding: `{}`.".format(encoding))
 
                     chunk = bytearray()
                     while True:
@@ -366,26 +366,26 @@ def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPR
                         self.rfile.readline()
 
                     if len(chunk) != size:
-                        raise Exception('Inconsistent values between chunked data and content range size!')
+                        raise Exception("Inconsistent values between chunked data and content range size!")
                 else:
                     chunk = self.rfile.read(size)
                     if len(chunk) < size:
-                        raise Exception('Truncated chunk!')
+                        raise Exception("Truncated chunk!")
 
-                dprint('PUT [{}]: Write {}B at {}.'.format(self.client_address[0], len(chunk), offset))
+                dprint("PUT [{}]: Write {}B at {}.".format(self.client_address[0], len(chunk), offset))
                 pwrite(self.disk_fd, chunk, offset)
                 if self.is_block_device:
                     fcntl.ioctl(self.disk_fd, BLKFLSBUF)
                 else:
                     os.fsync(self.disk_fd)
             except Exception as e:
-                eprint('Can\'t do PUT: `{}`.'.format(e))
+                eprint("Can't do PUT: `{}`.".format(e))
                 self.send_response_and_close(500)
                 return
 
-            body = b'Ok.'
+            body = b"Ok."
             self.send_response(200)
-            self.send_header('Content-Length', str(len(body)))
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
 
             try:
@@ -428,7 +428,7 @@ class HttpDiskServer(ThreadingMixIn, HTTPServer):
             with contextlib.suppress(Exception):
                 request.shutdown(socket.SHUT_RDWR)
 
-        if hasattr(ThreadingMixIn, 'server_close'):
+        if hasattr(ThreadingMixIn, "server_close"):
             ThreadingMixIn.server_close(self)
         else:
             # TODO(XCPNG-3919): Workaround for old python versions. Remove me later.
@@ -461,7 +461,7 @@ def run_server(disk: str, ip: str, port: int) -> None:
     def emit_server_ready() -> None:
         global STARTING_SERVER
         if STARTING_SERVER:
-            eprint('Server ready!')
+            eprint("Server ready!")
             STARTING_SERVER = False
 
     httpd: Optional[HttpDiskServer] = None
@@ -469,7 +469,7 @@ def run_server(disk: str, ip: str, port: int) -> None:
     disk_fd: Optional[int] = None
     while True:
         if SIGTERM_RECEIVED:
-            eprint('SIGTERM received. Exiting server...')
+            eprint("SIGTERM received. Exiting server...")
             break
 
         try:
@@ -493,7 +493,7 @@ def run_server(disk: str, ip: str, port: int) -> None:
             is_block_device = stat.S_ISBLK(os.fstat(disk_fd).st_mode)
 
             HandlerClass = MakeRequestHandler(disk_fd, is_block_device=is_block_device)
-            httpd = HttpDiskServer((ip or '', port), HandlerClass)
+            httpd = HttpDiskServer((ip or "", port), HandlerClass)
             httpd_thread = threading.Thread(target=httpd.serve_forever)
             httpd_thread.start()
 
@@ -505,12 +505,12 @@ def run_server(disk: str, ip: str, port: int) -> None:
             while not SIGTERM_RECEIVED:
                 signal.pause()
         except KeyboardInterrupt:
-            eprint('Exiting server...')
+            eprint("Exiting server...")
             break
         except Exception as e:
-            eprint('Unhandled exception: `{}`.'.format(e))
+            eprint("Unhandled exception: `{}`.".format(e))
             eprint(traceback.format_exc())
-            eprint('Restarting server...')
+            eprint("Restarting server...")
             if not STARTING_SERVER:
                 time.sleep(1)
         finally:
@@ -524,7 +524,7 @@ def run_server(disk: str, ip: str, port: int) -> None:
                     httpd.server_close()
                     httpd = None
             except Exception as e:
-                eprint('Failed to close server: {}.'.format(e))
+                eprint("Failed to close server: {}.".format(e))
             finally:
                 close_device(disk_fd)
 
@@ -539,25 +539,25 @@ def main() -> None:
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        '--disk', action='store', dest='disk', default=None, required=True,
-        help='Device to share'
+        "--disk", action="store", dest="disk", default=None, required=True,
+        help="Device to share"
     )
     parser.add_argument(
-        '--ip', action='store', dest='ip', type=str, default='', required=False,
-        help='IP to use'
+        "--ip", action="store", dest="ip", type=str, default="", required=False,
+        help="IP to use"
     )
     parser.add_argument(
-        '--port', action='store', dest='port', type=int, default=8000, required=False,
-        help='Port to use'
+        "--port", action="store", dest="port", type=int, default=8000, required=False,
+        help="Port to use"
     )
     parser.add_argument(
-        '-v', '--verbose', action='store_true', dest='verbose', default=False, required=False,
-        help='Enable verbose logging'
+        "-v", "--verbose", action="store_true", dest="verbose", default=False, required=False,
+        help="Enable verbose logging"
     )
 
     args = parser.parse_args()
     global OUTPUT_PREFIX
-    OUTPUT_PREFIX = '[' + os.path.basename(os.path.realpath(args.disk)) + '] '
+    OUTPUT_PREFIX = "[" + os.path.basename(os.path.realpath(args.disk)) + "] "
     global VERBOSE
     VERBOSE = args.verbose
     signal.signal(signal.SIGTERM, handle_sigterm)
