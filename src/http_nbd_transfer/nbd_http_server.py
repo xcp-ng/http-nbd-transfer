@@ -28,7 +28,11 @@ import sys
 import threading
 from types import FrameType
 
-from http_nbd_transfer.typing import Callable, Iterator, List, NoReturn, Optional, override
+from http_nbd_transfer.platform import EXEC_PATH_MODPROBE, EXEC_PATH_NBD_CLIENT, EXEC_PATH_NBDKIT
+import http_nbd_transfer.process as process
+from http_nbd_transfer.process import run_command
+
+from http_nbd_transfer.typing import Callable, Iterator, List, NoReturn, Optional
 
 # ==============================================================================
 
@@ -83,36 +87,6 @@ def dprint(message: str) -> None:
     if LOG_CONFIG.verbose:
         eprint(message)
 
-# ------------------------------------------------------------------------------
-
-class CommandError(Exception):
-    def __init__(self, code: int, cmd: str, stdout: str, stderr: str) -> None:
-        self.code = code
-        self.cmd = cmd
-        self.stdout = stdout
-        self.stderr = stderr
-        Exception.__init__(self, os.strerror(abs(code)))
-
-    @override
-    def __str__(self) -> str:
-        return f"Command exception: `{self.cmd}` (code: `{self.code}`, reason: `{self.stderr}`)"
-
-def call(cmd: List[str], expected_returncode: int = 0) -> str:
-    eprint(f"Call command: {cmd}")
-    p = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        close_fds=True,
-        universal_newlines=True
-    )
-
-    stdout, stderr = p.communicate()
-
-    if p.returncode != expected_returncode:
-        raise CommandError(p.returncode, str(cmd), stdout.strip(), stderr.strip())
-    return stdout
-
 # ==============================================================================
 
 class SignalTimeoutError(Exception):
@@ -136,17 +110,16 @@ def timeout(seconds: int) -> Iterator[None]:
 # ==============================================================================
 
 def get_nbd_pid(nbd_path: str) -> Optional[int]:
+    stdout, _stderr, ret_code = run_command([EXEC_PATH_NBD_CLIENT, "-c", nbd_path], simple=False)
+    if ret_code == 1:
+        return None # Not connected.
     try:
-        call(["nbd-client", "-c", nbd_path], expected_returncode=1)
-    except CommandError as e:
-        try:
-            return int(e.stdout)
-        except ValueError:
-            return -1
-    return None
+        return int(stdout)
+    except ValueError:
+        return -1
 
 def disconnect_nbd(nbd_path: str) -> None:
-    call(["nbd-client", "-d", nbd_path])
+    run_command([EXEC_PATH_NBD_CLIENT, "-d", nbd_path], expected_ret_code=0)
 
 class Nbd:
     __slots__ = ("name", "nbd")
@@ -167,7 +140,7 @@ def attach_nbd(socket_path: str, nbd_name: str, pid_path: str) -> Nbd:  # noqa: 
 
     nbds = get_nbds()
     if not nbds:
-        call(["modprobe", "nbd"])
+        run_command([EXEC_PATH_MODPROBE, "nbd"], expected_ret_code=0)
         nbds = get_nbds()
         if not nbds:
             raise Exception("No NBD available.")
@@ -196,7 +169,7 @@ def attach_nbd(socket_path: str, nbd_name: str, pid_path: str) -> Nbd:  # noqa: 
         try:
             # Use an extreme timeout here, should never be triggered.
             with timeout(30):
-                call(["nbd-client", "-unix", socket_path, nbd_path, "-b", "512"])
+                run_command([EXEC_PATH_NBD_CLIENT, "-unix", socket_path, nbd_path, "-b", "512"], expected_ret_code=0)
         except Exception as e:
             # We guess we have to try another device after that: this exception is probably
             # caused by a concurrent attach and not with our nbdkit plugin.
@@ -241,7 +214,7 @@ def run_nbd_server(socket_path: str, nbd_name: str, urls: str, device_size: Opti
     clean_paths()
 
     arguments = [
-        "nbdkit",
+        EXEC_PATH_NBDKIT,
         "--verbose",
         "--foreground",
         "-U", socket_path,
@@ -347,6 +320,7 @@ def main() -> None:
     args = parser.parse_args()
     LOG_CONFIG.prefix = "[" + args.nbd_name + "] "
     LOG_CONFIG.verbose = args.verbose
+    process.LOG_FUNCTION = eprint
     try:
         signal.signal(signal.SIGTERM, handle_sigterm)
         run_nbd_server(args.socket_path, args.nbd_name, args.urls, args.device_size)
