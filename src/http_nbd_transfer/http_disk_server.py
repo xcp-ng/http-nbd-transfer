@@ -53,13 +53,12 @@ DRBD_OPEN_SLEEP = 1.0  # In seconds.
 
 OUTPUT_PREFIX = ""
 
-SIGTERM_RECEIVED = False
+SIGTERM_EVENT = threading.Event()
 
 VERBOSE = False
 
 def handle_sigterm(*_args: object) -> None:
-    global SIGTERM_RECEIVED
-    SIGTERM_RECEIVED = True
+    SIGTERM_EVENT.set()
 
 # ------------------------------------------------------------------------------
 
@@ -99,7 +98,7 @@ def open_device(dev_path: str, *, retry: bool = True) -> Optional[int]:
         raise Exception(f"Cannot open device `{dev_path}`: `{e}`.")
 
     is_drbd = None
-    while not SIGTERM_RECEIVED:
+    while not SIGTERM_EVENT.is_set():
         try:
             disk_fd = os.open(dev_path, os.O_RDWR)
             eprint("Disk open!")
@@ -115,7 +114,7 @@ def open_device(dev_path: str, *, retry: bool = True) -> Optional[int]:
             if not is_drbd:
                 cannot_open(e)
 
-            if not SIGTERM_RECEIVED:
+            if not SIGTERM_EVENT.is_set():
                 time.sleep(DRBD_OPEN_SLEEP)
     return None
 
@@ -464,7 +463,7 @@ def run_server(disk: str, ip: str, port: int) -> None:  # noqa: C901
     httpd_thread: Optional[threading.Thread] = None
     disk_fd: Optional[int] = None
     while True:
-        if SIGTERM_RECEIVED:
+        if SIGTERM_EVENT.is_set():
             eprint("SIGTERM received. Exiting server...")
             break
 
@@ -483,7 +482,7 @@ def run_server(disk: str, ip: str, port: int) -> None:  # noqa: C901
             else:
                 disk_fd = open_device(disk)
 
-            if SIGTERM_RECEIVED or disk_fd is None:
+            if SIGTERM_EVENT.is_set() or disk_fd is None:
                 break
 
             is_block_device = stat.S_ISBLK(os.fstat(disk_fd).st_mode)
@@ -498,7 +497,7 @@ def run_server(disk: str, ip: str, port: int) -> None:  # noqa: C901
                 # We emit only after effective startup.
                 emit_server_ready()
 
-            while not SIGTERM_RECEIVED:
+            while not SIGTERM_EVENT.is_set():
                 signal.pause()
         except KeyboardInterrupt:
             eprint("Exiting server...")
