@@ -160,7 +160,7 @@ class Nbd:
         except Exception as e:
             eprint(f"Failed to disconnect NBD {self.nbd}: `{e}`.")
 
-def attach_nbd(socket_path: str, nbd_name: str, pid_path: str) -> Nbd:
+def attach_nbd(socket_path: str, nbd_name: str, pid_path: str) -> Nbd:  # noqa: C901
     def get_nbds() -> List[str]:
         return [path.name for path in Path("/dev").iterdir() if path.name.startswith("nbd")]
 
@@ -230,7 +230,7 @@ def attach_nbd(socket_path: str, nbd_name: str, pid_path: str) -> Nbd:
 
     raise Exception(f"Cannot attach `{socket_path}` to NBD.")
 
-def run_nbd_server(socket_path: str, nbd_name: str, urls: str, device_size: Optional[int]) -> None:
+def run_nbd_server(socket_path: str, nbd_name: str, urls: str, device_size: Optional[int]) -> None:  # noqa: C901
     pid_path = f"/var/run/nbd-{nbd_name}.pid"
 
     def clean_paths() -> None:
