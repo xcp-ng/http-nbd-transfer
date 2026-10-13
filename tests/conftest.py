@@ -1,4 +1,5 @@
 from collections import namedtuple
+import contextlib
 import ctypes
 import io
 import os
@@ -56,10 +57,8 @@ def timeout_call(timeoutseconds: int, function: Callable[..., T], *arguments: ob
 # ------------------------------------------------------------------------------
 
 def call_ignore(fun: Callable[[], object]) -> None:
-    try:
+    with contextlib.suppress(Exception):
         fun()
-    except Exception:
-        pass
 
 # ------------------------------------------------------------------------------
 
