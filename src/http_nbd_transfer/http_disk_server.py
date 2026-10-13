@@ -258,14 +258,12 @@ def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPR
             if req_range.startswith("bytes"):
                 req_range = req_range[5:].strip()
                 if req_range.startswith("="):
-                    try:
+                    with contextlib.suppress(Exception):
                         values = req_range[1:].lstrip().split("-")
                         begin = int(values[0])
                         end = int(values[1])
                         if begin <= end < self.get_content_size():
                             return [begin, end - begin + 1]
-                    except Exception:
-                        pass
 
             # Return error: "Range Not Satisfiable".
             self.send_response_and_close(416)
@@ -279,14 +277,12 @@ def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPR
 
             if req_range.startswith("bytes"):
                 req_range = req_range[5:].strip()
-                try:
+                with contextlib.suppress(Exception):
                     values = req_range.split("-")
                     begin = int(values[0])
                     end = int(values[1].split("/")[0].strip())
                     if begin <= end < self.get_content_size():
                         return [begin, end - begin + 1]
-                except Exception:
-                    pass
 
             # Return error: "Range Not Satisfiable".
             self.send_response_and_close(416)
@@ -389,11 +385,9 @@ def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPR
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
 
-            try:
+            # The client closed the connection too early, so we should ignore the error.
+            with contextlib.suppress(BrokenPipeError):
                 self.wfile.write(body)
-            except BrokenPipeError:
-                # The client closed the connection too early, so we should ignore the error.
-                pass
 
     return RequestHandler
 
