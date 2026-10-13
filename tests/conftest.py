@@ -17,9 +17,11 @@ from types import FrameType
 
 import pytest
 
+from http_nbd_transfer.platform import EXEC_PATH_DMESG
+from http_nbd_transfer.process import run_internal_command
 from tests import buffer
 
-from http_nbd_transfer.typing import Callable, List, NoReturn, Optional, override, Tuple, TypeVar, Union
+from http_nbd_transfer.typing import Callable, NoReturn, Optional, override, Tuple, TypeVar, Union
 
 T = TypeVar("T")
 
@@ -96,26 +98,8 @@ def generate_aligned_random_buffer(size_kib: int, alignment_b: int) -> "ctypes.A
 # ------------------------------------------------------------------------------
 
 def get_dmesg_output() -> str:
-    p = subprocess.Popen(
-        ["dmesg"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        close_fds=True,
-        universal_newlines=True
-    )
-    assert p.stdout is not None
-
-    limit = 30
-    lines: List[str] = []
-    while True:
-        line = p.stdout.readline()
-        if not line:
-            break
-        if len(lines) == limit:
-            lines.pop(0)
-        lines.append(line)
-
-    return "\n".join(lines)
+    stdout = run_internal_command([EXEC_PATH_DMESG])
+    return "".join(stdout.splitlines(keepends=True)[-30:])
 
 # ------------------------------------------------------------------------------
 
