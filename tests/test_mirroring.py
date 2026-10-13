@@ -34,7 +34,7 @@ class TestMirroring:
 
         i = 0
         while i < 20:
-            print("Loop {}".format(i))
+            print(f"Loop {i}")
             offset = random.randint(0, backing_file_mirror.capacity)
             offset = (offset + (chunk_size - 1)) & ~(chunk_size - 1)
 

@@ -95,12 +95,10 @@ class CommandException(Exception):
 
     @override
     def __str__(self) -> str:
-        return "Command exception: `{}` (code: `{}`, reason: `{}`)".format(
-            self.cmd, self.code, self.stderr
-        )
+        return f"Command exception: `{self.cmd}` (code: `{self.code}`, reason: `{self.stderr}`)"
 
 def call(cmd: List[str], expected_returncode: int = 0) -> str:
-    eprint("Call command: {}".format(cmd))
+    eprint(f"Call command: {cmd}")
     p = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -161,7 +159,7 @@ class Nbd:
         try:
             disconnect_nbd("/dev/" + self.nbd)
         except Exception as e:
-            eprint("Failed to disconnect NBD {}: `{}`.".format(self.nbd, e))
+            eprint(f"Failed to disconnect NBD {self.nbd}: `{e}`.")
 
 def attach_nbd(socket_path: str, nbd_name: str, pid_path: str) -> Nbd:
     def get_nbds() -> List[str]:
@@ -191,10 +189,7 @@ def attach_nbd(socket_path: str, nbd_name: str, pid_path: str) -> Nbd:
         pid = get_nbd_pid(nbd_path)
         if pid is not None:
             if not pid_exists(pid):
-                eprint(
-                    "Potential leaked NBD device detected: `{}` used by dead process {}"
-                    .format(nbd_path, pid)
-                )
+                eprint(f"Potential leaked NBD device detected: `{nbd_path}` used by dead process {pid}.")
             continue
 
         # Use free device.
@@ -205,7 +200,7 @@ def attach_nbd(socket_path: str, nbd_name: str, pid_path: str) -> Nbd:
         except Exception as e:
             # We guess we have to try another device after that: this exception is probably
             # caused by a concurrent attach and not with our nbdkit plugin.
-            eprint("Failed to attach socket `{}` to {}: {}.".format(socket_path, nbd_path, e))
+            eprint(f"Failed to attach socket `{socket_path}` to {nbd_path}: `{e}`.")
 
             # Ensure the device is still free after failed command.
             # Note: a race condition exists when we try to release this device,
@@ -226,19 +221,19 @@ def attach_nbd(socket_path: str, nbd_name: str, pid_path: str) -> Nbd:
             continue
 
         # NBD is now attached, try to modify scheduler + return NBD object.
-        eprint("NBD `{}` is now attached.".format(nbd_path))
+        eprint(f"NBD `{nbd_path}` is now attached.")
         try:
             with open("/sys/block/" + nbd + "/queue/scheduler", "w") as fd:
                 fd.write("none")
         except Exception as e:
-            eprint("Failed to modify scheduler of {}: `{}`.".format(nbd_path, e))
+            eprint(f"Failed to modify scheduler of {nbd_path}: `{e}`.")
 
         return Nbd(nbd, nbd_name)
 
-    raise Exception("Cannot attach `{}` to NBD.".format(socket_path))
+    raise Exception(f"Cannot attach `{socket_path}` to NBD.")
 
 def run_nbd_server(socket_path: str, nbd_name: str, urls: str, device_size: Optional[int]) -> None:
-    pid_path = "/var/run/nbd-{}.pid".format(nbd_name)
+    pid_path = f"/var/run/nbd-{nbd_name}.pid"
 
     def clean_paths() -> None:
         remove_file(socket_path)
@@ -281,7 +276,7 @@ def run_nbd_server(socket_path: str, nbd_name: str, urls: str, device_size: Opti
                 if "written pidfile" in line:
                     break
     except Exception as e:
-        raise Exception("Failed to start nbdkit server: {}.".format(e))
+        raise Exception(f"Failed to start nbdkit server: {e}.")
 
     # Continue to log server messages in stdout.
     def log_server_messages() -> None:
@@ -359,5 +354,5 @@ def main() -> None:
         signal.signal(signal.SIGTERM, handle_sigterm)
         run_nbd_server(args.socket_path, args.nbd_name, args.urls, args.device_size)
     except Exception as e:
-        eprint("Got exception: `{}`.".format(e))
+        eprint(f"Got exception: `{e}`.")
         exit(1)
