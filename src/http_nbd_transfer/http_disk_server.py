@@ -220,7 +220,7 @@ def get_device_size(fd: int) -> int:
 
 RequestType = Union[socket.socket, Tuple[bytes, socket.socket]]
 
-def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPRequestHandler]:
+def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPRequestHandler]:  # noqa: C901
     class RequestHandler(BaseHTTPRequestHandler):
         # Use HTTP 1.1: TCP connections are reused and not directly closed.
         protocol_version = "HTTP/1.1"
@@ -335,7 +335,7 @@ def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPR
 
             self.wfile.write(chunk)
 
-        def do_PUT(self) -> None:
+        def do_PUT(self) -> None:  # noqa: C901
             req_range = self.parse_content_range()
             if not req_range:
                 return
@@ -440,7 +440,7 @@ class HttpDiskServer(ThreadingMixIn, HTTPServer):
 
 # ------------------------------------------------------------------------------
 
-def run_server(disk: str, ip: str, port: int) -> None:
+def run_server(disk: str, ip: str, port: int) -> None:  # noqa: C901
     # Check if we can use this port.
     if not check_bindable(port):
         return
