@@ -17,7 +17,7 @@
 #
 
 import argparse
-from contextlib import contextmanager
+import contextlib
 import errno
 import os
 from pathlib import Path
@@ -62,10 +62,8 @@ def remove_file(path: str) -> None:
             raise e
 
 def run_or_ignore(fun: Callable[[], object]) -> None:
-    try:
+    with contextlib.suppress(Exception):
         fun()
-    except Exception:
-        pass
 
 # ------------------------------------------------------------------------------
 
@@ -120,7 +118,7 @@ class TimeoutException(Exception):
     def __init__(self) -> None:
         super().__init__("timeout")
 
-@contextmanager
+@contextlib.contextmanager
 def timeout(seconds: int) -> Iterator[None]:
     def handler(_signum: int, _frame: Optional[FrameType]) -> NoReturn:
         raise TimeoutException
