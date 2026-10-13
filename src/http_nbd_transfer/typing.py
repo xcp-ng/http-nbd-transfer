@@ -23,10 +23,18 @@ from typing import NoReturn  # noqa: F401
 
 # TODO(XCPNG-3919): Remove all hacks for python 3.11.
 
-if not TYPE_CHECKING:  # noqa: F405, SIM102
+if not TYPE_CHECKING:  # noqa: F405
     if not hasattr(typing, "override"):
         def override(method):  # type: ignore # noqa: ANN001, ANN201
             with contextlib.suppress(AttributeError, TypeError):
                 # Set internal attr `__override__` like described in PEP 698.
                 method.__override__ = True
             return method
+
+    if not hasattr(typing, "Final"):
+        class _TypingOnly:
+            def __getitem__(self, _item):  # type: ignore # noqa: ANN001, ANN204
+                return self
+
+        Final = _TypingOnly()
+        Literal = _TypingOnly()

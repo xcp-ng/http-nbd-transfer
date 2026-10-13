@@ -29,11 +29,13 @@ import socket
 from socketserver import BaseServer, ThreadingMixIn
 import stat
 import struct
-import subprocess
 import sys
 import threading
 import time
 import traceback
+
+from http_nbd_transfer.platform import EXEC_PATH_DRBDSETUP, EXEC_PATH_LSOF
+from http_nbd_transfer.process import CommandError, run_internal_command
 
 from http_nbd_transfer.typing import Callable, cast, List, NoReturn, Optional, override, Set, Tuple, Type, Union
 
@@ -67,15 +69,8 @@ LOG_CONFIG = LogConfig()
 # ------------------------------------------------------------------------------
 
 def check_bindable(port: int) -> bool:
-    p = subprocess.Popen(
-        ["lsof", "-i:" + str(port), "-Fp"],
-        stdout=subprocess.PIPE,
-        close_fds=True,
-        universal_newlines=True
-    )
-
-    stdout, _stderr = p.communicate()
-    if p.returncode:
+    stdout, _stderr, ret_code = run_internal_command([EXEC_PATH_LSOF, "-i:" + str(port), "-Fp"], simple=False)
+    if ret_code:
         return True
 
     pid = stdout[1:].rstrip() # remove 'p' before pid
@@ -153,17 +148,14 @@ def is_openable(dev_path: str) -> bool:
         assert False # TODO: Implement me.
 
     try:
-        p = subprocess.Popen(
-            ["drbdsetup", "status", resource_name, "--json"],
-            stdout=subprocess.PIPE,
-            close_fds=True,
-            universal_newlines=True
+        stdout, _stderr, ret_code = run_internal_command(
+            [EXEC_PATH_DRBDSETUP, "status", resource_name, "--json"],
+            simple=False
         )
-    except OSError:
+    except CommandError:
         return False # Binary not installed.
 
-    stdout, _stderr = p.communicate()
-    if p.returncode:
+    if ret_code:
         return False
 
     try:
