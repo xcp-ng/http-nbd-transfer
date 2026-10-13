@@ -20,6 +20,7 @@ import argparse
 from contextlib import contextmanager
 import errno
 import os
+from pathlib import Path
 import re
 import signal
 import subprocess
@@ -31,8 +32,8 @@ from http_nbd_transfer.typing import Callable, Iterator, List, NoReturn, Optiona
 
 # ==============================================================================
 
-WORKING_DIR = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "")
-NBDKIT_PLUGIN = WORKING_DIR + "../lib64/nbdkit/plugins/nbdkit-multi-http-plugin.so"
+WORKING_DIR = Path(sys.argv[0]).absolute().parent
+NBDKIT_PLUGIN = WORKING_DIR / ".." / "lib64" / "nbdkit" / "plugins" / "nbdkit-multi-http-plugin.so"
 
 OUTPUT_PREFIX = ""
 
@@ -55,7 +56,7 @@ def pid_exists(pid: int) -> bool:
 
 def remove_file(path: str) -> None:
     try:
-        os.remove(path)
+        Path(path).unlink()
     except OSError as e:
         if e.errno != errno.ENOENT:
             raise e
@@ -163,7 +164,7 @@ class Nbd:
 
 def attach_nbd(socket_path: str, nbd_name: str, pid_path: str) -> Nbd:
     def get_nbds() -> List[str]:
-        return list(filter(lambda nbd: nbd.startswith("nbd"), os.listdir("/dev")))
+        return [path.name for path in Path("/dev").iterdir() if path.name.startswith("nbd")]
 
     nbds = get_nbds()
     if not nbds:
@@ -207,7 +208,7 @@ def attach_nbd(socket_path: str, nbd_name: str, pid_path: str) -> Nbd:
             # if the targeted pid is invalid. It can be used by another process.
             pid = None
             try:
-                with open(pid_path) as f:
+                with Path(pid_path).open() as f:
                     pid = int(f.readline().strip("\n"))
             except Exception:
                 continue
@@ -223,8 +224,7 @@ def attach_nbd(socket_path: str, nbd_name: str, pid_path: str) -> Nbd:
         # NBD is now attached, try to modify scheduler + return NBD object.
         eprint(f"NBD `{nbd_path}` is now attached.")
         try:
-            with open("/sys/block/" + nbd + "/queue/scheduler", "w") as fd:
-                fd.write("none")
+            (Path("/sys/block") / nbd / "queue" / "scheduler").write_text("none")
         except Exception as e:
             eprint(f"Failed to modify scheduler of {nbd_path}: `{e}`.")
 
@@ -248,7 +248,7 @@ def run_nbd_server(socket_path: str, nbd_name: str, urls: str, device_size: Opti
         "-U", socket_path,
         "-e", nbd_name,
         "-P", pid_path,
-        NBDKIT_PLUGIN,
+        str(NBDKIT_PLUGIN),
         "urls=" + urls
     ]
     if device_size is not None:

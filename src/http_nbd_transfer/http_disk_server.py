@@ -23,6 +23,7 @@ import fcntl
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import os
+from pathlib import Path
 import signal
 import socket
 from socketserver import BaseServer, ThreadingMixIn
@@ -88,7 +89,7 @@ def dprint(message: str) -> None:
 
 def is_drbd_device(path: str) -> bool:
     try:
-        st = os.stat(path)
+        st = Path(path).stat()
     except Exception as e:
         eprint(f"Failed to execute `stat` call on `{path}`: `{e}`.")
         return False
@@ -557,7 +558,7 @@ def main() -> None:
 
     args = parser.parse_args()
     global OUTPUT_PREFIX
-    OUTPUT_PREFIX = "[" + os.path.basename(os.path.realpath(args.disk)) + "] "
+    OUTPUT_PREFIX = "[" + Path(args.disk).resolve().name + "] "
     global VERBOSE
     VERBOSE = args.verbose
     signal.signal(signal.SIGTERM, handle_sigterm)
