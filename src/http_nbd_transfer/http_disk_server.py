@@ -79,12 +79,12 @@ def check_bindable(port: int) -> bool:
     eprint(f"Cannot use port {port}, already used by: {pid}.")
     return False
 
-def eprint(str: str) -> None:
-    print(OUTPUT_PREFIX + str, file=sys.stderr)
+def eprint(message: str) -> None:
+    print(OUTPUT_PREFIX + message, file=sys.stderr)
 
-def dprint(str: str) -> None:
+def dprint(message: str) -> None:
     if VERBOSE:
-        eprint(str)
+        eprint(message)
 
 def is_drbd_device(path: str) -> bool:
     try:
@@ -291,11 +291,11 @@ def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPR
             self.send_response_and_close(416)
             return None
 
-        def _log_message(self, func: Callable[[str], None], format: str, *args: object) -> None:
+        def _log_message(self, func: Callable[[str], None], message_format: str, *args: object) -> None:
             func("%s - - [%s] %s\n" % (
                 self.address_string(),
                 self.log_date_time_string(),
-                format % args
+                message_format % args
             ))
 
         @override
