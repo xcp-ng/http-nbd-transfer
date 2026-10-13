@@ -41,12 +41,12 @@ def generate_random_string(length: int) -> str:
 
 # ------------------------------------------------------------------------------
 
-class TimeoutException(Exception):
+class TimeoutCallError(Exception):
     pass
 
 def timeout_call(timeoutseconds: int, function: Callable[..., T], *arguments: object) -> T:
     def handler(_signum: int, _frame: Optional[FrameType]) -> NoReturn:
-        raise TimeoutException()
+        raise TimeoutCallError()
     signal.signal(signal.SIGALRM, handler)
     signal.alarm(timeoutseconds)
     try:
