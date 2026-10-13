@@ -364,8 +364,7 @@ def create_random_backing_file(request: "pytest.FixtureRequest", env: Env, open_
         call_ignore(lambda: backing_path.unlink())
 
     try:
-        with open(backing_path, "wb") as f:
-            f.write(random_buffer)
+        backing_path.write_bytes(random_buffer)
 
         http_server = start_http_server(env, backing_path)
         (nbd_server, nbd_path) = start_nbd_server(env, "disk-test", RANDOM_BUFFER_SIZE_KIB * 1024)
