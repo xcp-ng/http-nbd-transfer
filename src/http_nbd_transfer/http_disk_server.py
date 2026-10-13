@@ -105,7 +105,7 @@ def open_device(dev_path: str, *, retry: bool = True) -> Optional[int]:
             disk_fd = os.open(dev_path, os.O_RDWR)
             eprint("Disk open!")
             return disk_fd
-        except OSError as e:
+        except OSError as e:  # noqa: PERF203
             if e.errno == errno.EAGAIN or e.errno == errno.EINTR:
                 continue
             if e.errno != errno.EROFS or not retry:
@@ -128,7 +128,7 @@ def close_device(fd: Optional[int]) -> None:
         try:
             os.close(fd)
             return
-        except OSError as e:
+        except OSError as e:  # noqa: PERF203
             if e.errno == errno.EBADF:
                 return
             if e.errno == errno.EINTR:
