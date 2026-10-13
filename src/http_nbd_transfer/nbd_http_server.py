@@ -72,16 +72,16 @@ THREAD_PRINT_LOCK = threading.Lock()
 
 VERBOSE = False
 
-def thread_print(str: str) -> None:
+def thread_print(message: str) -> None:
     with THREAD_PRINT_LOCK:
-        print(str)
+        print(message)
 
-def eprint(str: str) -> None:
-    thread_print(OUTPUT_PREFIX + str)
+def eprint(message: str) -> None:
+    thread_print(OUTPUT_PREFIX + message)
 
-def dprint(str: str) -> None:
+def dprint(message: str) -> None:
     if VERBOSE:
-        eprint(str)
+        eprint(message)
 
 # ------------------------------------------------------------------------------
 
