@@ -46,6 +46,9 @@ BLKFLSBUF = (0x12 << 8) + 97  # Flush buffer cache.
 
 REQ_LIMIT_SIZE = 1024 * 1024 * 128  # In bytes.
 
+# Timeout for closing a client connection when no data is received for N seconds.
+DEFAULT_CLIENT_TIMEOUT = 60.0
+
 DRBD_MAJOR = 147
 DRBD_BY_RES_PATH = "/dev/drbd/by-res/"
 
@@ -214,10 +217,19 @@ def get_device_size(fd: int) -> int:
 
 RequestType = Union[socket.socket, Tuple[bytes, socket.socket]]
 
-def make_request_handler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPRequestHandler]:  # noqa: C901
+def make_request_handler(  # noqa: C901
+    disk_fd: int,
+    *,
+    is_block_device: bool,
+    client_timeout: float
+) -> Type[BaseHTTPRequestHandler]:
     class RequestHandler(BaseHTTPRequestHandler):
         # Use HTTP 1.1: TCP connections are reused and not directly closed.
         protocol_version = "HTTP/1.1"
+
+        # Max time in seconds without data from a client. Without it,
+        # a dead host would keep a thread and its connection forever.
+        timeout = client_timeout
 
         # Headers and body are sent with separate `send` calls: without this, Nagle's
         # algorithm and delayed ACKs can add ~40ms to each small response.
@@ -291,7 +303,10 @@ def make_request_handler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTT
 
         @override
         def log_error(self, format: str, *args: object) -> None:
-            self._log_message(eprint, format, *args)
+            # Hide closed connections on timeout, we still have other messages to understand
+            # when there is really and issue. For example in `do_PUT`.
+            func = dprint if format.startswith("Request timed out") else eprint
+            self._log_message(func, format, *args)
 
         def do_HEAD(self) -> None:
             self.send_response(200)
@@ -430,7 +445,7 @@ class HttpDiskServer(ThreadingMixIn, HTTPServer):
 
 # ------------------------------------------------------------------------------
 
-def run_server(disk: str, ip: str, port: int) -> None:  # noqa: C901
+def run_server(disk: str, ip: str, port: int, client_timeout: float) -> None:  # noqa: C901
     # Check if we can use this port.
     if not check_bindable(port):
         return
@@ -479,7 +494,10 @@ def run_server(disk: str, ip: str, port: int) -> None:  # noqa: C901
 
             is_block_device = stat.S_ISBLK(os.fstat(disk_fd).st_mode)
 
-            httpd = HttpDiskServer((ip or "", port), make_request_handler(disk_fd, is_block_device=is_block_device))
+            httpd = HttpDiskServer(
+                (ip or "", port),
+                make_request_handler(disk_fd, is_block_device=is_block_device, client_timeout=client_timeout)
+            )
             httpd_thread = threading.Thread(target=httpd.serve_forever)
             httpd_thread.start()
 
@@ -537,6 +555,11 @@ def main() -> None:
         help="Port to use"
     )
     parser.add_argument(
+        "--client-timeout", action="store", dest="client_timeout", type=float, default=DEFAULT_CLIENT_TIMEOUT,
+        required=False,
+        help="Close a client connection after this delay (in seconds) without received data"
+    )
+    parser.add_argument(
         "-v", "--verbose", action="store_true", dest="verbose", default=False, required=False,
         help="Enable verbose logging"
     )
@@ -546,7 +569,7 @@ def main() -> None:
     LOG_CONFIG.verbose = args.verbose
     try:
         signal.signal(signal.SIGTERM, handle_sigterm)
-        run_server(args.disk, args.ip, args.port)
+        run_server(args.disk, args.ip, args.port, args.client_timeout)
     except Exception as e:
         eprint(f"Got exception: `{e}`.")
         eprint(traceback.format_exc())
