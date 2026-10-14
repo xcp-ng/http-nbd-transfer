@@ -310,6 +310,10 @@ static int select_server (Handle *handle, int limitUrlId, int serverCount) {
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, handle->errBuf));
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_HTTPHEADER, handle->headers));
 
+  // nbdkit runs the plugin in a connection thread (even with a serialized thread model).
+  // So we must disable signals to make libcurl happy.
+  CHECK_CURL(curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L));
+
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_NOBODY, 1L));
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_AUTOREFERER, 1L));
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L));
