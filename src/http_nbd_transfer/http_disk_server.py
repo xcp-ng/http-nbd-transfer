@@ -549,5 +549,10 @@ def main() -> None:
     args = parser.parse_args()
     LOG_CONFIG.prefix = "[" + Path(args.disk).resolve().name + "] "
     LOG_CONFIG.verbose = args.verbose
-    signal.signal(signal.SIGTERM, handle_sigterm)
-    run_server(args.disk, args.ip, args.port)
+    try:
+        signal.signal(signal.SIGTERM, handle_sigterm)
+        run_server(args.disk, args.ip, args.port)
+    except Exception as e:
+        eprint(f"Got exception: `{e}`.")
+        eprint(traceback.format_exc())
+        exit(1)
