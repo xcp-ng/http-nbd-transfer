@@ -34,6 +34,11 @@
 #define BROKEN_PIPE_RETRY_COUNT 30
 #define TIMEOUT_SERVER_TEST 3000L
 
+// Never wait for an HTTP `100 Continue`. cURL sends by default `Expect: 100-continue` for chunked
+// or large bodies and servers that don't answer it (for example using HTTP/1.0) make libcurl wait 1s before
+// sending the body of each write.
+#define NO_EXPECT_HEADER "Expect:"
+
 // -----------------------------------------------------------------------------
 // Config & handle.
 // -----------------------------------------------------------------------------
@@ -57,6 +62,7 @@ GlobalConfig Config;
 
 typedef struct {
   CURL *curl;
+  struct curl_slist *headers;
 
   int readonly;
 
@@ -293,6 +299,7 @@ static int select_server (Handle *handle, int limitUrlId, int serverCount) {
 
   // Configure cURL.
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, handle->errBuf));
+  CHECK_CURL(curl_easy_setopt(curl, CURLOPT_HTTPHEADER, handle->headers));
 
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_NOBODY, 1L));
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_AUTOREFERER, 1L));
@@ -500,10 +507,19 @@ static int cb_config_complete () {
   return 0;
 }
 
+static void cb_close (void *userData);
+
 static void *cb_open (int readonly) {
   Handle *handle = calloc(1, sizeof *handle);
   if (!handle) {
     nbdkit_error("Failed to allocate handle.");
+    return NULL;
+  }
+
+  handle->headers = curl_slist_append(NULL, NO_EXPECT_HEADER);
+  if (!handle->headers) {
+    nbdkit_error("Failed to allocate curl header list.");
+    free(handle);
     return NULL;
   }
 
@@ -517,7 +533,7 @@ static void *cb_open (int readonly) {
 
     if (!Config.hasDeviceSize) {
       nbdkit_error("No device size, exit!");
-      free(handle);
+      cb_close(handle);
       return NULL;
     }
   }
@@ -532,6 +548,7 @@ static void cb_close (void *userData) {
   Handle *handle = userData;
   if (handle) {
     curl_easy_cleanup(handle->curl);
+    curl_slist_free_all(handle->headers);
     free(handle);
   }
 }
@@ -625,6 +642,9 @@ static int cb_pwrite (void *userData, const void *buf, uint32_t count, uint64_t 
     handle->readBuf = buf;
     handle->readCount = count;
     handle->uploading = true;
+
+    // With a known size, libcurl sends `Content-Length` instead of a chunked body.
+    CHECK_CURL(curl_easy_setopt(handle->curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t)count));
 
     ReqError result;
     exec_op(handle, CURLOPT_UPLOAD, count, offset, result);
