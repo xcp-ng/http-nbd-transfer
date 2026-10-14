@@ -285,7 +285,7 @@ static int select_server (Handle *handle, int limitUrlId, int serverCount) {
   if (serverCount <= 0 || serverCount > maxServerCount)
     serverCount = maxServerCount;
 
-  double deviceSize = 0.0;
+  curl_off_t deviceSize = 0;
 
   if (handle->curl)
     curl_easy_cleanup(handle->curl);
@@ -306,9 +306,9 @@ static int select_server (Handle *handle, int limitUrlId, int serverCount) {
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L));
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L));
 
-  const long protocols = CURLPROTO_HTTP | CURLPROTO_HTTPS;
-  CHECK_CURL(curl_easy_setopt(curl, CURLOPT_PROTOCOLS, protocols));
-  CHECK_CURL(curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS, protocols));
+  const char *const protocols = "http,https";
+  CHECK_CURL(curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, protocols));
+  CHECK_CURL(curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, protocols));
 
   // Optional config.
   if (Config.user)
@@ -358,13 +358,13 @@ static int select_server (Handle *handle, int limitUrlId, int serverCount) {
       continue;
     }
 
-    res = curl_easy_getinfo(handle->curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD, &deviceSize);
+    res = curl_easy_getinfo(handle->curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &deviceSize);
     if (res != CURLE_OK) {
       log_error(handle, res, "Failed to get size of backing device on `%s`", url);
       continue;
     }
 
-    if (deviceSize > 0.0) {
+    if (deviceSize > 0) {
       // Success. \o/
       break;
     }
@@ -376,7 +376,7 @@ static int select_server (Handle *handle, int limitUrlId, int serverCount) {
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, NULL));
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_HEADERDATA, NULL));
 
-  if (deviceSize <= 0.0) {
+  if (deviceSize <= 0) {
     handle->currentUrlId = -1;
     return -1;
   }
