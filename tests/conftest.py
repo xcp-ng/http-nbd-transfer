@@ -11,7 +11,6 @@ import signal
 import socket
 import string
 import subprocess
-import sys
 import tempfile
 from types import FrameType
 
@@ -28,6 +27,7 @@ T = TypeVar("T")
 # ==============================================================================
 
 REG_NBD_PATH = re.compile("NBD `(/dev/nbd[0-9]+)` is now attached.$")
+REG_HTTP_SERVER_READY = re.compile("Server ready!$")
 
 SECTOR_SIZE = 512
 SECTOR_MASK = SECTOR_SIZE - 1
@@ -122,13 +122,32 @@ def start_http_server(env: "Env", backing_path: Path) -> subprocess.Popen:
         env.http_port
     ]
 
-    return subprocess.Popen(
+    http_server = subprocess.Popen(
         arguments,
-        stdout=sys.stdout,
+        stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         start_new_session=True,
+        universal_newlines=True,
         env=dict(os.environ, PYTHONUNBUFFERED="1")
     )
+    http_server_stdout = http_server.stdout
+    assert http_server_stdout is not None
+
+    # The NBD server doesn't wait for the HTTP server at startup, we must do this on our side.
+    try:
+        def is_ready() -> bool:
+            while http_server.poll() is None:
+                line = http_server_stdout.readline()
+                if REG_HTTP_SERVER_READY.search(line):
+                    return True
+            return False
+        if not timeout_call(10, is_ready):
+            raise Exception("HTTP server exited before being ready!")
+    except Exception:
+        kill_server(http_server)
+        raise
+
+    return http_server
 
 # ------------------------------------------------------------------------------
 
