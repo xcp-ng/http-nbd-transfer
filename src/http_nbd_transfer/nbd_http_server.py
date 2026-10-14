@@ -19,6 +19,7 @@
 import argparse
 import contextlib
 import errno
+import functools
 import os
 from pathlib import Path
 import re
@@ -153,12 +154,12 @@ def attach_nbd(socket_path: str, nbd_name: str, pid_path: str) -> Nbd:  # noqa: 
         try:
             fd = os.open(nbd_path, os.O_EXCL)
             os.close(fd)
-        except Exception:
+        except Exception:  # noqa: S112
             continue
 
         # Ensure device is free.
         # Also we must do that, otherwise this error can be produced during the attach:
-        # "Ioctl NBD_SET_SOCK failed: Device or resource busy"
+        # `Ioctl NBD_SET_SOCK failed: Device or resource busy`
         # And of course, this error kills our server.
         pid = get_nbd_pid(nbd_path)
         if pid is not None:
@@ -183,14 +184,14 @@ def attach_nbd(socket_path: str, nbd_name: str, pid_path: str) -> Nbd:  # noqa: 
             try:
                 with Path(pid_path).open() as f:
                     pid = int(f.readline().strip("\n"))
-            except Exception:
+            except Exception:  # noqa: S112
                 continue
             finally:
                 remove_file(pid_path)
 
             targeted_pid = get_nbd_pid(nbd_path)
             if (pid is not None and pid == targeted_pid) or (targeted_pid is not None and targeted_pid < 0):
-                run_or_ignore(lambda: disconnect_nbd(nbd_path))
+                run_or_ignore(functools.partial(disconnect_nbd, nbd_path))
 
             continue
 
@@ -249,7 +250,7 @@ def run_nbd_server(socket_path: str, nbd_name: str, urls: str, device_size: Opti
                 if "written pidfile" in line:
                     break
     except Exception as e:
-        raise Exception(f"Failed to start nbdkit server: {e}.")
+        raise Exception("Failed to start nbdkit server.") from e
 
     # Continue to log server messages in stdout.
     def log_server_messages() -> None:
