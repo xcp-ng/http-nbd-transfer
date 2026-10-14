@@ -334,7 +334,7 @@ def make_request_handler(  # noqa: C901
                 return
 
             self.send_response(206)
-            self.send_header("Content-Range", f"bytes {offset}-{size - 1}/{self.get_content_size()}")
+            self.send_header("Content-Range", f"bytes {offset}-{offset + size - 1}/{self.get_content_size()}")
             self.send_header("Content-Length", str(int(size)))
             self.end_headers()
 
