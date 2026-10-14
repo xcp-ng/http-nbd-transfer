@@ -478,7 +478,7 @@ static int cb_config_complete () {
       if (++Config.urlArraySize > Config.urlArrayCapacity) {
         Config.urlArrayCapacity <<= 1;
 
-        void *ptr = realloc(Config.urlArray, Config.urlArrayCapacity);
+        void *ptr = realloc(Config.urlArray, sizeof *Config.urlArray * Config.urlArrayCapacity);
         if (!ptr) {
           nbdkit_error("Failed to reallocate URL array.");
           return -1;
