@@ -215,7 +215,8 @@ def get_bin_dir(config: "pytest.Config") -> Path:
         raise pytest.UsageError("`bin_dir` is not set in pytest.ini, use --bin-dir")
 
     # The rootdir is the directory of pytest.ini. An absolute `bin_dir` is kept as is.
-    return Path(str(config.rootdir)) / bin_dir
+    # TODO(XCPNG-3919): Workaround for old pytest. Remove the `type` directive later.
+    return Path(str(config.rootdir)) / bin_dir  # type: ignore[attr-defined]
 
 @pytest.fixture(scope="session")
 def env(request: "pytest.FixtureRequest") -> Env:
@@ -293,7 +294,7 @@ class MirrorDevice(Device):
     __slots__ = ("_fd_mirror", )
 
     def __init__(self, device: Device, fd_mirror: int) -> None:
-        super().__init__(device._buffer, device._fd)
+        super().__init__(device._buffer, device._fd)  # noqa: SLF001
         self._fd_mirror = fd_mirror
 
     # Because O_DIRECT is used in mirroring mode, we must ensure buffer addrs,
@@ -344,7 +345,7 @@ def create_random_backing_file(request: "pytest.FixtureRequest", env: Env, open_
 
         if fd is not None:
             call_ignore(lambda: os.close(fd))
-        call_ignore(lambda: backing_path.unlink())
+        call_ignore(backing_path.unlink)
 
     try:
         backing_path.write_bytes(random_buffer)

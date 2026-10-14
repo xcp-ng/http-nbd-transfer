@@ -145,7 +145,7 @@ def is_openable(dev_path: str) -> bool:
         assert res_name_end != -1
         resource_name = dev_path[prefix_len:res_name_end]
     else:
-        assert False # TODO: Implement me.
+        raise NotImplementedError(f"Only DRBD paths in `{DRBD_BY_RES_PATH}` are supported, got: `{dev_path}`.")
 
     try:
         stdout, _stderr, ret_code = run_internal_command(
@@ -214,7 +214,7 @@ def get_device_size(fd: int) -> int:
 
 RequestType = Union[socket.socket, Tuple[bytes, socket.socket]]
 
-def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPRequestHandler]:  # noqa: C901
+def make_request_handler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPRequestHandler]:  # noqa: C901
     class RequestHandler(BaseHTTPRequestHandler):
         # Use HTTP 1.1: TCP connections are reused and not directly closed.
         protocol_version = "HTTP/1.1"
@@ -283,11 +283,7 @@ def MakeRequestHandler(disk_fd: int, *, is_block_device: bool) -> Type[BaseHTTPR
             return None
 
         def _log_message(self, func: Callable[[str], None], message_format: str, *args: object) -> None:
-            func("%s - - [%s] %s\n" % (
-                self.address_string(),
-                self.log_date_time_string(),
-                message_format % args
-            ))
+            func(f"{self.address_string()} - - [{self.log_date_time_string()}] {message_format % args}\n")
 
         @override
         def log_message(self, format: str, *args: object) -> None:
@@ -483,8 +479,7 @@ def run_server(disk: str, ip: str, port: int) -> None:  # noqa: C901
 
             is_block_device = stat.S_ISBLK(os.fstat(disk_fd).st_mode)
 
-            HandlerClass = MakeRequestHandler(disk_fd, is_block_device=is_block_device)
-            httpd = HttpDiskServer((ip or "", port), HandlerClass)
+            httpd = HttpDiskServer((ip or "", port), make_request_handler(disk_fd, is_block_device=is_block_device))
             httpd_thread = threading.Thread(target=httpd.serve_forever)
             httpd_thread.start()
 
