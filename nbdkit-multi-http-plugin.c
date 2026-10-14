@@ -83,6 +83,7 @@ typedef struct {
   char *writeBuf;
   size_t writeCount;
 
+  bool rangeIgnored;
   bool acceptRanges;
 
   int currentUrlId;
@@ -189,6 +190,14 @@ static size_t curl_cb_write (char *ptr, size_t size, size_t nmemb, void *userDat
     return totalSize;
   }
   assert(handle->writeBuf);
+
+  // A server can ignore the range and send the whole content with `200 OK`: the data would not be at
+  // the requested offset. Abort the transfer in this case.
+  long status = 0;
+  if (curl_easy_getinfo(handle->curl, CURLINFO_RESPONSE_CODE, &status) != CURLE_OK || status != 206) {
+    handle->rangeIgnored = true;
+    return 0;
+  }
 
   size_t written = totalSize;
   if (written > handle->writeCount)
@@ -358,6 +367,7 @@ static int select_server (Handle *handle, int limitUrlId, int serverCount) {
       continue;
     }
 
+    handle->acceptRanges = false;
     res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
       log_error(handle, res, "Cannot exec head request properly on `%s`", url);
@@ -601,10 +611,14 @@ static int cb_pread (void *userData, void *buf, uint32_t count, uint64_t offset,
   for (int retryCount = BROKEN_PIPE_RETRY_COUNT; ; ) {
     handle->writeBuf = buf;
     handle->writeCount = count;
+    handle->rangeIgnored = false;
 
     ReqError result;
     exec_op(handle, CURLOPT_HTTPGET, count, offset, result);
-    if (result == ReqErrorOk) {
+    if (handle->rangeIgnored) {
+      nbdkit_error("Server `%s` ignored the range of a read request.", Config.urlArray[handle->currentUrlId]);
+      result = ReqErrorRange;
+    } else if (result == ReqErrorOk) {
       if (!handle->writeCount)
         goto success;
       nbdkit_error("Incomplete read request, retry on another server.");
