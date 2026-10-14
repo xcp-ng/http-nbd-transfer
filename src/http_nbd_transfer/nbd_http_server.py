@@ -250,37 +250,32 @@ def run_nbd_server(socket_path: str, nbd_name: str, urls: str, device_size: Opti
         )
         verbose_pattern = re.compile(r"{}({})".format(nbdkit_log_prefix, "|".join(verbose_keywords)))
 
-        while server.poll() is None:
-            line = server_stdout.readline().rstrip("\n")
-            if line:
-                if verbose_pattern.match(line):
-                    dprint(line)
+        for line in server_stdout:
+            message = line.rstrip("\n")
+            if message:
+                if verbose_pattern.match(message):
+                    dprint(message)
                 else:
-                    thread_print(line)
+                    thread_print(message)
 
-    # Wait for init and pid file creation. It's initiated by nbdkit when connections can be accepted.
-    # Another solution: we can parse the logs concerning the pid file instead but it's only available
-    # using verbose mode and it has an impact on performance.
+    nbd = None
     server_stdout_thread = None
     try:
         server_stdout_thread = threading.Thread(target=log_server_messages)
         server_stdout_thread.start()
 
-        with timeout(10):
-            while not Path(pid_path).exists():
-                if server.poll() is not None:
-                    raise Exception(f"Nbdkit exited with code {server.returncode}.")
-                time.sleep(0.1)
-    except Exception as e:
-        if server.poll() is None:
-            server.kill()
-        server.wait()
-        if server_stdout_thread:
-            server_stdout_thread.join()
-        raise Exception("Failed to start nbdkit server.") from e
+        # Wait for init and pid file creation. It's initiated by nbdkit when connections can be accepted.
+        # Another solution: we can parse the logs concerning the pid file instead but it's only available
+        # using verbose mode and it has an impact on performance.
+        try:
+            with timeout(10):
+                while not Path(pid_path).exists():
+                    if server.poll() is not None:
+                        raise Exception(f"Nbdkit exited with code {server.returncode}.")
+                    time.sleep(0.1)
+        except Exception as e:
+            raise Exception("Failed to start nbdkit server.") from e
 
-    nbd = None
-    try:
         nbd = attach_nbd(socket_path, nbd_name, pid_path)
         while True:
             try:
@@ -294,10 +289,22 @@ def run_nbd_server(socket_path: str, nbd_name: str, urls: str, device_size: Opti
     finally:
         if nbd:
             nbd.disconnect()
+
         server.send_signal(signal.SIGQUIT)
-        server.wait()
-        server_stdout_thread.join()
-        clean_paths()
+        try:
+            server.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            eprint("Nbdkit is still running after SIGQUIT, killing it...")
+            server.kill()
+            server.wait()
+
+        if server_stdout_thread and server_stdout_thread.ident:
+            server_stdout_thread.join()
+
+        try:
+            clean_paths()
+        except Exception as e:
+            eprint(f"Failed to clean paths: `{e}`.")
 
 # ==============================================================================
 
