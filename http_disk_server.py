@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 #
 # Copyright (C) 2022  Vates SAS
@@ -16,23 +16,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-from __future__ import print_function
-
-import sys
-
-if sys.version_info > (3,):
-    from http.server import BaseHTTPRequestHandler, HTTPServer
-
-    def get_header(handler, header):
-        return handler.headers.get(header)
-else:
-    from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
-
-    def get_header(handler, header):
-        return handler.headers.getheader(header)
-
-from io import BytesIO
 import argparse
+import contextlib
 import errno
 import fcntl
 import json
@@ -42,9 +27,12 @@ import socket
 import stat
 import struct
 import subprocess
+import sys
 import threading
 import time
 import traceback
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
 
 BLKGETSIZE64 = 0x80081272
 BLKFLSBUF = (0x12 << 8) + 97  # Flush buffer cache.
@@ -184,6 +172,24 @@ def is_openable(dev_path):
 
     return True
 
+def pread(fd, size, offset):
+    chunks = []
+    while size > 0:
+        chunk = os.pread(fd, size, offset)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        size -= len(chunk)
+        offset += len(chunk)
+    return b''.join(chunks)
+
+def pwrite(fd, data, offset):
+    chunk = memoryview(data)
+    while chunk:
+        written = os.pwrite(fd, chunk, offset)
+        chunk = chunk[written:]
+        offset += written
+
 def get_device_size(fd):
     disk_capacity = -1
     while True:
@@ -208,36 +214,37 @@ def get_device_size(fd):
 
 def MakeRequestHandler(disk_fd, is_block_device):
     class RequestHandler(BaseHTTPRequestHandler):
+        # Use HTTP 1.1: TCP connections are reused and not directly closed.
+        protocol_version = 'HTTP/1.1'
+
+        # Headers and body are sent with separate `send` calls: without this, Nagle's
+        # algorithm and delayed ACKs can add ~40ms to each small response.
+        disable_nagle_algorithm = True
+
         def __init__(self, *args, **kwargs):
-            # Note: We cannot use this call in python 2:
-            # super(RequestHandler, self).__init__(*args, **kwargs)
-            # > TypeError: must be type, not classobj
-            #
-            # The base class of `BaseHTTPRequestHandler` uses an old def:
-            # "class BaseRequestHandler:"
             self.disk_fd = disk_fd
             self.is_block_device = is_block_device
-            BaseHTTPRequestHandler.__init__(self, *args, **kwargs)
+            super().__init__(*args, **kwargs)
 
         def get_content_size(self):
             return get_device_size(self.disk_fd)
 
-        # Ignore broken pipe for python2 version.
-        # See: https://stackoverflow.com/questions/6063416/python-basehttpserver-how-do-i-catch-trap-broken-pipe-errors#answer-14355079
-        def finish(self):
-            try:
-                if not self.wfile.closed:
-                    self.wfile.flush()
-                    self.wfile.close()
-            except socket.error:
-                pass
-            self.rfile.close()
+        def send_response_and_close(self, code):
+            # This method must be called in case of errors:
+            # - In case of malformed request.
+            # - Invalid buffer => close the connection, we can't reuse it.
+            # - Body not consumed.
+            # - ...
+            self.send_response(code)
+            self.send_header('Content-Length', '0')
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.close_connection = True
 
         def parse_range(self):
             req_range = self.headers.get('range')
             if req_range is None:
-                self.send_response(400)
-                self.end_headers()
+                self.send_response_and_close(400)
                 return
 
             if req_range.startswith('bytes'):
@@ -247,20 +254,18 @@ def MakeRequestHandler(disk_fd, is_block_device):
                         values = req_range[1:].lstrip().split('-')
                         begin = int(values[0])
                         end = int(values[1])
-                        if begin <= end and end - begin < self.get_content_size():
+                        if begin <= end < self.get_content_size():
                             return [begin, end - begin + 1]
                     except Exception:
                         pass
 
             # Return error: "Range Not Satisfiable".
-            self.send_response(416)
-            self.end_headers()
+            self.send_response_and_close(416)
 
         def parse_content_range(self):
             req_range = self.headers.get('Content-Range')
             if req_range is None:
-                self.send_response(400)
-                self.end_headers()
+                self.send_response_and_close(400)
                 return
 
             if req_range.startswith('bytes'):
@@ -269,18 +274,17 @@ def MakeRequestHandler(disk_fd, is_block_device):
                     values = req_range.split('-')
                     begin = int(values[0])
                     end = int(values[1].split('/')[0].strip())
-                    if begin <= end and end - begin < self.get_content_size():
+                    if begin <= end < self.get_content_size():
                         return [begin, end - begin + 1]
                 except Exception:
                     pass
 
             # Return error: "Range Not Satisfiable".
-            self.send_response(416)
-            self.end_headers()
+            self.send_response_and_close(416)
 
         def _log_message(self, func, format, *args):
             func('%s - - [%s] %s\n' % (
-                self.address_string() if sys.version_info > (3,) else self.client_address[0],
+                self.address_string(),
                 self.log_date_time_string(),
                 format % args
             ))
@@ -307,12 +311,13 @@ def MakeRequestHandler(disk_fd, is_block_device):
 
             try:
                 dprint('GET [{}]: Read {}B at {}.'.format(self.client_address[0], size, offset))
-                os.lseek(self.disk_fd, offset, os.SEEK_SET)
-                chunk = os.read(self.disk_fd, size)
+                chunk = pread(self.disk_fd, size, offset)
+                if len(chunk) != size:
+                    # Raise and close connection in case of short read, we must strictly avoid reusing it.
+                    raise Exception('Short read ({}/{} bytes)!'.format(len(chunk), size))
             except Exception as e:
                 eprint('Can\'t do GET: `{}`.'.format(e))
-                self.send_response(500)
-                self.end_headers()
+                self.send_response_and_close(500)
                 return
 
             self.send_response(206)
@@ -331,7 +336,7 @@ def MakeRequestHandler(disk_fd, is_block_device):
             size = req_range[1]
 
             try:
-                encoding = get_header(self, 'Transfer-Encoding')
+                encoding = self.headers.get('Transfer-Encoding')
                 if encoding is not None:
                     if encoding != 'chunked':
                         raise Exception('Unsupported encoding: `{}`.'.format(encoding))
@@ -340,6 +345,10 @@ def MakeRequestHandler(disk_fd, is_block_device):
                     while True:
                         chunk_size = int(self.rfile.readline().strip(), 16)
                         if not chunk_size:
+                            # Consume empty line after chunk size, otherwise the next request
+                            # of a persistent connection would start with garbage.
+                            while self.rfile.readline().strip():
+                                pass
                             break
                         chunk.extend(self.rfile.read(chunk_size))
                         self.rfile.readline()
@@ -352,47 +361,62 @@ def MakeRequestHandler(disk_fd, is_block_device):
                         raise Exception('Truncated chunk!')
 
                 dprint('PUT [{}]: Write {}B at {}.'.format(self.client_address[0], len(chunk), offset))
-                os.lseek(self.disk_fd, offset, os.SEEK_SET)
-                os.write(self.disk_fd, chunk)
+                pwrite(self.disk_fd, chunk, offset)
                 if self.is_block_device:
                     fcntl.ioctl(self.disk_fd, BLKFLSBUF)
                 else:
                     os.fsync(self.disk_fd)
             except Exception as e:
                 eprint('Can\'t do PUT: `{}`.'.format(e))
-                self.send_response(500)
-                self.end_headers()
+                self.send_response_and_close(500)
                 return
 
+            body = b'Ok.'
             self.send_response(200)
+            self.send_header('Content-Length', str(len(body)))
             self.end_headers()
-            response = BytesIO()
-            response.write(b'Ok.')
 
-            # Write response for all python versions.
-            # Handle broken pipe error for python3 version.
             try:
-                self.wfile.write(response.getvalue())
-            except Exception:
-                if sys.version_info > (3,):
-                    from builtins import BrokenPipeError
-                    try:
-                        raise
-                    except BrokenPipeError:
-                        # The client closed the connection too early,
-                        # so we should ignore the error.
-                        pass
-                else:
-                    raise
+                self.wfile.write(body)
+            except BrokenPipeError:
+                # The client closed the connection too early, so we should ignore the error.
+                pass
 
     return RequestHandler
 
-class HttpDiskServer(HTTPServer):
+class HttpDiskServer(ThreadingMixIn, HTTPServer):
     def __init__(self, *args, **kwargs):
         # Reuse old port to avoid: "Address already in use".
         self.allow_reuse_address = True
+        self.active_requests = set()
+        self.active_requests_lock = threading.Lock()
         HTTPServer.__init__(self, *args, **kwargs)
         self.ready_event = threading.Event()
+
+    def process_request(self, request, client_address):
+        with self.active_requests_lock:
+            self.active_requests.add(request)
+        ThreadingMixIn.process_request(self, request, client_address)
+
+    def shutdown_request(self, request):
+        with self.active_requests_lock:
+            self.active_requests.discard(request)
+        HTTPServer.shutdown_request(self, request)
+
+    def server_close(self):
+        # Connections are persistent: wake up and close the handlers waiting for a new request.
+        with self.active_requests_lock:
+            requests = list(self.active_requests)
+        for request in requests:
+            with contextlib.suppress(Exception):
+                request.shutdown(socket.SHUT_RDWR)
+
+        if hasattr(ThreadingMixIn, 'server_close'):
+            ThreadingMixIn.server_close(self)
+        else:
+            # TODO(XCPNG-3919): Workaround for old python versions. Remove me later.
+            # `server_close` is not available for python 3.6.
+            HTTPServer.server_close(self)
 
     def serve_forever(self, poll_interval=0.5):
         self.ready_event.set()

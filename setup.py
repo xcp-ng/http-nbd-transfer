@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 #
 # Copyright (C) 2022  Vates SAS
@@ -26,6 +26,7 @@ setup(
     author_email="ronan.abhamon@vates.tech",
     url="https://vates.tech",
     license="GPLv3",
+    python_requires=">=3.6",
     py_modules=["http_disk_server", "nbd_http_server"],
     scripts=["scripts/http-disk-server", "scripts/nbd-http-server"]
 )
