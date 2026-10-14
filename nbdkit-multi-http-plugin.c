@@ -32,7 +32,15 @@
 #define UNUSED(X) (void)X;
 
 #define BROKEN_PIPE_RETRY_COUNT 30
+
+// Total timeout of the request used to probe a server (in ms).
 #define TIMEOUT_SERVER_TEST 3000L
+
+// Total timeout of read/write requests (in ms). Requests are small, so their duration is mainly the
+// server response time (e.g. a write synced and replicated by DRBD). Must be greater than the time
+// DRBD needs to drop a dead peer (net `timeout`, 6s by default), otherwise we can get EIO if we try
+// to reach another server without a PRIMARY.
+#define TIMEOUT_REQUEST 10000L
 
 // Never wait for an HTTP `100 Continue`. cURL sends by default `Expect: 100-continue` for chunked
 // or large bodies and servers that don't answer it (for example using HTTP/1.0) make libcurl wait 1s before
@@ -382,6 +390,8 @@ static int select_server (Handle *handle, int limitUrlId, int serverCount) {
   }
 
   // Configure cURL to read/write.
+  CHECK_CURL(curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, TIMEOUT_REQUEST));
+
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_READFUNCTION, curl_cb_read));
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_READDATA, handle));
 
