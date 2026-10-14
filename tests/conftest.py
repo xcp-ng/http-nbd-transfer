@@ -126,7 +126,7 @@ def start_http_server(env: "Env", backing_path: Path) -> subprocess.Popen:
         arguments,
         stdout=sys.stdout,
         stderr=subprocess.STDOUT,
-        preexec_fn=os.setsid,
+        start_new_session=True,
         env=dict(os.environ, PYTHONUNBUFFERED="1")
     )
 
@@ -149,7 +149,7 @@ def start_nbd_server(env: "Env", volume_name: str, device_size: int) -> Tuple[su
         arguments,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        preexec_fn=os.setsid,
+        start_new_session=True,
         universal_newlines=True,
         env=dict(os.environ, PYTHONUNBUFFERED="1")
     )
