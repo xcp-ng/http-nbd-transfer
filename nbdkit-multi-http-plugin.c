@@ -72,8 +72,6 @@ typedef struct {
   CURL *curl;
   struct curl_slist *headers;
 
-  int readonly;
-
   char errBuf[CURL_ERROR_SIZE];
 
   const char *readBuf;
@@ -400,10 +398,8 @@ static int select_server (Handle *handle, int limitUrlId, int serverCount) {
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_READFUNCTION, curl_cb_read));
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_READDATA, handle));
 
-  if (!handle->readonly) {
-    CHECK_CURL(curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_cb_write));
-    CHECK_CURL(curl_easy_setopt(curl, CURLOPT_WRITEDATA, handle));
-  }
+  CHECK_CURL(curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_cb_write));
+  CHECK_CURL(curl_easy_setopt(curl, CURLOPT_WRITEDATA, handle));
 
   nbdkit_debug("Selected server: `%s`.", Config.urlArray[handle->currentUrlId]);
   handle->deviceSize = (size_t)deviceSize;
@@ -525,6 +521,8 @@ static int cb_config_complete () {
 static void cb_close (void *userData);
 
 static void *cb_open (int readonly) {
+  UNUSED(readonly);
+
   Handle *handle = calloc(1, sizeof *handle);
   if (!handle) {
     nbdkit_error("Failed to allocate handle.");
@@ -538,7 +536,6 @@ static void *cb_open (int readonly) {
     return NULL;
   }
 
-  handle->readonly = readonly;
   handle->currentUrlId = -1;
 
   // In any case we must return a valid handle. So if we can't reach a server and if the device size
