@@ -26,6 +26,7 @@ import signal
 import subprocess
 import sys
 import threading
+import traceback
 from types import FrameType
 
 from http_nbd_transfer.platform import EXEC_PATH_MODPROBE, EXEC_PATH_NBD_CLIENT, EXEC_PATH_NBDKIT
@@ -326,4 +327,5 @@ def main() -> None:
         run_nbd_server(args.socket_path, args.nbd_name, args.urls, args.device_size)
     except Exception as e:
         eprint(f"Got exception: `{e}`.")
+        eprint(traceback.format_exc())
         exit(1)
