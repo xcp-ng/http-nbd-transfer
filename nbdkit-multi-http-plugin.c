@@ -105,6 +105,7 @@ typedef struct {
 
 static size_t toSize (const char *str, bool *ok) {
   char *end;
+  errno = 0;
   long long value = strtoll(str, &end, 10);
 
   if (ok)
