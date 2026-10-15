@@ -352,6 +352,11 @@ def make_request_handler(  # noqa: C901
             offset = req_range[0]
             size = req_range[1]
 
+            if size > REQ_LIMIT_SIZE:
+                eprint(f"Can't do PUT, the body is too large: {size}B.")
+                self.send_response_and_close(413)
+                return
+
             chunk: Union[bytes, bytearray]
             try:
                 encoding = self.headers.get("Transfer-Encoding")
@@ -368,12 +373,17 @@ def make_request_handler(  # noqa: C901
                             while self.rfile.readline().strip():
                                 pass
                             break
+                        if len(chunk) + chunk_size > size:
+                            raise Exception("Chunked data larger than content range size!")
                         chunk.extend(self.rfile.read(chunk_size))
                         self.rfile.readline()
 
                     if len(chunk) != size:
                         raise Exception("Inconsistent values between chunked data and content range size!")
                 else:
+                    content_length = self.headers.get("Content-Length")
+                    if content_length is None or int(content_length) != size:
+                        raise Exception(f"Content length `{content_length}` doesn't match content range size {size}!")
                     chunk = self.rfile.read(size)
                     if len(chunk) < size:
                         raise Exception("Truncated chunk!")
