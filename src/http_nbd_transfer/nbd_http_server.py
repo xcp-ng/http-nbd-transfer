@@ -42,6 +42,8 @@ from http_nbd_transfer.typing import Callable, Iterator, List, NoReturn, Optiona
 WORKING_DIR = Path(sys.argv[0]).absolute().parent
 NBDKIT_PLUGIN = WORKING_DIR / ".." / "lib64" / "nbdkit" / "plugins" / "nbdkit-multi-http-plugin.so"
 
+REG_NBD_DEVICE = re.compile(r"nbd\d+$")
+
 SIGTERM_EVENT = threading.Event()
 
 def handle_sigterm(*_args: object) -> None:
@@ -140,7 +142,7 @@ class Nbd:
 
 def attach_nbd(socket_path: str, nbd_name: str, pid_path: str) -> Nbd:  # noqa: C901
     def get_nbds() -> List[str]:
-        return [path.name for path in Path("/dev").iterdir() if path.name.startswith("nbd")]
+        return [path.name for path in Path("/dev").iterdir() if REG_NBD_DEVICE.match(path.name)]
 
     nbds = get_nbds()
     if not nbds:
