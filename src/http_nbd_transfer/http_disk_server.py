@@ -299,7 +299,7 @@ def make_request_handler(  # noqa: C901
             return None
 
         def _log_message(self, func: Callable[[str], None], message_format: str, *args: object) -> None:
-            func(f"{self.address_string()} - - [{self.log_date_time_string()}] {message_format % args}\n")
+            func(f"{self.address_string()} - - [{self.log_date_time_string()}] {message_format % args}")
 
         @override
         def log_message(self, format: str, *args: object) -> None:
