@@ -546,8 +546,9 @@ def run_server(disk: str, ip: str, port: int, client_timeout: float) -> None:  #
             try:
                 if httpd_thread:
                     assert httpd
-                    httpd.shutdown()
-                    httpd_thread.join()
+                    if httpd_thread.ident:
+                        httpd.shutdown()
+                        httpd_thread.join()
                     httpd_thread = None
                 if httpd:
                     httpd.server_close()
