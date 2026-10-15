@@ -102,7 +102,7 @@ typedef struct {
 // Conv helpers.
 // -----------------------------------------------------------------------------
 
-static size_t toSize (const char *str, bool *ok) {
+static size_t to_size (const char *str, bool *ok) {
   char *end;
   errno = 0;
   long long value = strtoll(str, &end, 10);
@@ -276,7 +276,7 @@ static ReqError check_req_perform (Handle *handle, CURLcode code) {
 }
 
 // -----------------------------------------------------------------------------
-// Misc..
+// Misc.
 // -----------------------------------------------------------------------------
 
 #define CHECK_CURL(FUNC) \
@@ -411,7 +411,7 @@ static int select_server (Handle *handle, int limitUrlId, int serverCount) {
 
   nbdkit_debug("Selected server: `%s`.", Config.urlArray[handle->currentUrlId]);
   handle->deviceSize = (size_t)deviceSize;
-  nbdkit_debug("Device size: %" PRIi64 ".", handle->deviceSize);
+  nbdkit_debug("Device size: %zu.", handle->deviceSize);
 
   return 0;
 
@@ -465,7 +465,7 @@ static int cb_config (const char *key, const char *value) {
       return -1;
   } else if (!strcmp(key, "device-size")) {
     bool ok;
-    Config.deviceSize = toSize(value, &ok);
+    Config.deviceSize = to_size(value, &ok);
     if (!ok) {
       nbdkit_error("Invalid device size!");
       return -1;
