@@ -74,12 +74,15 @@ PRINT_LOCK = threading.Lock()
 # ------------------------------------------------------------------------------
 
 def check_bindable(port: int) -> bool:
-    stdout, _stderr, ret_code = run_internal_command([EXEC_PATH_LSOF, "-i:" + str(port), "-Fp"], simple=False)
+    stdout, _stderr, ret_code = run_internal_command(
+        [EXEC_PATH_LSOF, "-n", "-P", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp"],
+        simple=False
+    )
     if ret_code:
         return True
 
-    pid = stdout[1:].rstrip() # remove 'p' before pid
-    eprint(f"Cannot use port {port}, already used by: {pid}.")
+    pids = ", ".join(line[1:] for line in stdout.splitlines() if line.startswith("p"))
+    eprint(f"Cannot use port {port}, already used by: {pids}.")
     return False
 
 def eprint(message: str) -> None:
