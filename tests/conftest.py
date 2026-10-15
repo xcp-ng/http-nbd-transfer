@@ -49,12 +49,13 @@ class TimeoutCallError(Exception):
 def timeout_call(timeoutseconds: int, function: Callable[..., T], *arguments: object) -> T:
     def handler(_signum: int, _frame: Optional[FrameType]) -> NoReturn:
         raise TimeoutCallError()
-    signal.signal(signal.SIGALRM, handler)
+    old_handler = signal.signal(signal.SIGALRM, handler)
     signal.alarm(timeoutseconds)
     try:
         return function(*arguments)
     finally:
         signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
 
 # ------------------------------------------------------------------------------
 
