@@ -204,7 +204,7 @@ def get_device_size(fd: int) -> int:
             fd_stat = os.fstat(fd)
             if stat.S_ISBLK(fd_stat.st_mode):
                 buf = fcntl.ioctl(fd, BLKGETSIZE64, b" " * 8)
-                disk_capacity = struct.unpack("L", buf)[0]
+                disk_capacity = struct.unpack("=Q", buf)[0]
             else:
                 disk_capacity = fd_stat.st_size
             break
