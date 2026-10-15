@@ -737,7 +737,9 @@ static struct nbdkit_plugin plugin = {
   .flush             = NULL,
   .trim              = NULL,
   .zero              = NULL,
-  .errno_is_preserved = 1
+  // Don't use the current errno (left by libc or cURL).
+  // By default nbdkit reports errors as EIO.
+  .errno_is_preserved = 0
 };
 
 #undef cb_config_help
