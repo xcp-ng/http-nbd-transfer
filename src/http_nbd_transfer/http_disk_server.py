@@ -408,7 +408,7 @@ def make_request_handler(  # noqa: C901
             self.end_headers()
 
             # The client closed the connection too early, so we should ignore the error.
-            with contextlib.suppress(BrokenPipeError):
+            with contextlib.suppress(ConnectionError):
                 self.wfile.write(body)
 
     return RequestHandler
@@ -435,6 +435,14 @@ class HttpDiskServer(ThreadingMixIn, HTTPServer):
         with self.active_requests_lock:
             self.active_requests.discard(request)
         HTTPServer.shutdown_request(self, request)
+
+    @override
+    def handle_error(self, request: RequestType, client_address: Tuple[str, int]) -> None:
+        exception = sys.exc_info()[1]
+        if isinstance(exception, ConnectionError):
+            eprint(f"Connection error with {client_address[0]}: `{exception}`.")
+        else:
+            eprint(f"Exception while handling request of {client_address[0]}:\n{traceback.format_exc()}")
 
     @override
     def server_close(self) -> None:
