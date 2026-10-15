@@ -80,8 +80,9 @@ class LogConfig:
 LOG_CONFIG = LogConfig()
 
 def thread_print(message: str) -> None:
+    # Always flush to notify caller.
     with THREAD_PRINT_LOCK:
-        print(message)  # noqa: T201
+        print(message, flush=True)  # noqa: T201
 
 def eprint(message: str) -> None:
     thread_print(LOG_CONFIG.prefix + message)
@@ -235,8 +236,7 @@ def run_nbd_server(socket_path: str, nbd_name: str, urls: str, device_size: Opti
         arguments,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        universal_newlines=True,
-        env=dict(os.environ, PYTHONUNBUFFERED="1")
+        universal_newlines=True
     )
     server_stdout = server.stdout
     assert server_stdout is not None

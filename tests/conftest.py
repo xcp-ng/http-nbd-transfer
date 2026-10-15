@@ -127,8 +127,7 @@ def start_http_server(env: "Env", backing_path: Path) -> subprocess.Popen:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         start_new_session=True,
-        universal_newlines=True,
-        env=dict(os.environ, PYTHONUNBUFFERED="1")
+        universal_newlines=True
     )
     http_server_stdout = http_server.stdout
     assert http_server_stdout is not None
@@ -169,8 +168,7 @@ def start_nbd_server(env: "Env", volume_name: str, device_size: int) -> Tuple[su
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         start_new_session=True,
-        universal_newlines=True,
-        env=dict(os.environ, PYTHONUNBUFFERED="1")
+        universal_newlines=True
     )
     nbd_server_stdout = nbd_server.stdout
     assert nbd_server_stdout is not None
