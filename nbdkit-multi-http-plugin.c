@@ -397,10 +397,8 @@ static int select_server (Handle *handle, int limitUrlId, int serverCount) {
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, NULL));
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_HEADERDATA, NULL));
 
-  if (deviceSize <= 0) {
-    handle->currentUrlId = -1;
-    return -1;
-  }
+  if (deviceSize <= 0)
+    goto err;
 
   // Configure cURL to read/write.
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, TIMEOUT_REQUEST));
@@ -418,6 +416,8 @@ static int select_server (Handle *handle, int limitUrlId, int serverCount) {
   return 0;
 
 err:
+  // Force a new selection on the next request: the cURL handle may be partially configured at this point.
+  handle->currentUrlId = -1;
   return -1;
 }
 
