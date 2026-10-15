@@ -281,7 +281,9 @@ class Device:
             chunk = buffer(chunk, 0, count)
         print(f"Device: Write {count}B at {offset}.")
         self._buffer[offset:offset + count] = chunk
-        os.write(self._fd, chunk)
+        view = memoryview(chunk).cast("B")[:count]
+        while view:
+            view = view[os.write(self._fd, view):]
 
     def check_read_all(self) -> None:
         self.check_read(len(self._buffer), 0)
@@ -305,8 +307,15 @@ class Device:
 
     @staticmethod
     def _read(fd: int, buffer: "ctypes.Array[ctypes.c_char]") -> int:
+        view = memoryview(buffer).cast("B")
+        total = 0
         with io.FileIO(fd, closefd=False) as fio:
-            return fio.readinto(buffer)
+            while total < len(view):
+                count = fio.readinto(view[total:])
+                if not count:
+                    break
+                total += count
+        return total
 
 class MirrorDevice(Device):
     __slots__ = ("_fd_mirror", )
