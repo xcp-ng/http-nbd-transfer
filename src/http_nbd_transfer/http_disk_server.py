@@ -69,6 +69,8 @@ class LogConfig:
 
 LOG_CONFIG = LogConfig()
 
+PRINT_LOCK = threading.Lock()
+
 # ------------------------------------------------------------------------------
 
 def check_bindable(port: int) -> bool:
@@ -81,7 +83,9 @@ def check_bindable(port: int) -> bool:
     return False
 
 def eprint(message: str) -> None:
-    print(LOG_CONFIG.prefix + message, file=sys.stderr)  # noqa: T201
+    # Always flush to notify caller.
+    with PRINT_LOCK:
+        print(LOG_CONFIG.prefix + message, file=sys.stderr, flush=True)  # noqa: T201
 
 def dprint(message: str) -> None:
     if LOG_CONFIG.verbose:
