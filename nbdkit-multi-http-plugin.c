@@ -32,7 +32,20 @@
 #define UNUSED(X) (void)X;
 
 #define BROKEN_PIPE_RETRY_COUNT 30
+
+// Total timeout of the request used to probe a server (in ms).
 #define TIMEOUT_SERVER_TEST 3000L
+
+// Total timeout of read/write requests (in ms). Requests are small, so their duration is mainly the
+// server response time (e.g. a write synced and replicated by DRBD). Must be greater than the time
+// DRBD needs to drop a dead peer (net `timeout`, 6s by default), otherwise we can get EIO if we try
+// to reach another server without a PRIMARY.
+#define TIMEOUT_REQUEST 10000L
+
+// Never wait for an HTTP `100 Continue`. cURL sends by default `Expect: 100-continue` for chunked
+// or large bodies and servers that don't answer it (for example using HTTP/1.0) make libcurl wait 1s before
+// sending the body of each write.
+#define NO_EXPECT_HEADER "Expect:"
 
 // -----------------------------------------------------------------------------
 // Config & handle.
@@ -57,8 +70,7 @@ GlobalConfig Config;
 
 typedef struct {
   CURL *curl;
-
-  int readonly;
+  struct curl_slist *headers;
 
   char errBuf[CURL_ERROR_SIZE];
 
@@ -71,6 +83,7 @@ typedef struct {
   char *writeBuf;
   size_t writeCount;
 
+  bool rangeIgnored;
   bool acceptRanges;
 
   int currentUrlId;
@@ -89,8 +102,9 @@ typedef struct {
 // Conv helpers.
 // -----------------------------------------------------------------------------
 
-static size_t toSize (const char *str, bool *ok) {
+static size_t to_size (const char *str, bool *ok) {
   char *end;
+  errno = 0;
   long long value = strtoll(str, &end, 10);
 
   if (ok)
@@ -177,6 +191,14 @@ static size_t curl_cb_write (char *ptr, size_t size, size_t nmemb, void *userDat
   }
   assert(handle->writeBuf);
 
+  // A server can ignore the range and send the whole content with `200 OK`: the data would not be at
+  // the requested offset. Abort the transfer in this case.
+  long status = 0;
+  if (curl_easy_getinfo(handle->curl, CURLINFO_RESPONSE_CODE, &status) != CURLE_OK || status != 206) {
+    handle->rangeIgnored = true;
+    return 0;
+  }
+
   size_t written = totalSize;
   if (written > handle->writeCount)
     written = handle->writeCount;
@@ -254,7 +276,7 @@ static ReqError check_req_perform (Handle *handle, CURLcode code) {
 }
 
 // -----------------------------------------------------------------------------
-// Misc..
+// Misc.
 // -----------------------------------------------------------------------------
 
 #define CHECK_CURL(FUNC) \
@@ -279,7 +301,7 @@ static int select_server (Handle *handle, int limitUrlId, int serverCount) {
   if (serverCount <= 0 || serverCount > maxServerCount)
     serverCount = maxServerCount;
 
-  double deviceSize = 0.0;
+  curl_off_t deviceSize = 0;
 
   if (handle->curl)
     curl_easy_cleanup(handle->curl);
@@ -293,15 +315,20 @@ static int select_server (Handle *handle, int limitUrlId, int serverCount) {
 
   // Configure cURL.
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, handle->errBuf));
+  CHECK_CURL(curl_easy_setopt(curl, CURLOPT_HTTPHEADER, handle->headers));
+
+  // nbdkit runs the plugin in a connection thread (even with a serialized thread model).
+  // So we must disable signals to make libcurl happy.
+  CHECK_CURL(curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L));
 
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_NOBODY, 1L));
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_AUTOREFERER, 1L));
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L));
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L));
 
-  const long protocols = CURLPROTO_HTTP | CURLPROTO_HTTPS;
-  CHECK_CURL(curl_easy_setopt(curl, CURLOPT_PROTOCOLS, protocols));
-  CHECK_CURL(curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS, protocols));
+  const char *const protocols = "http,https";
+  CHECK_CURL(curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, protocols));
+  CHECK_CURL(curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, protocols));
 
   // Optional config.
   if (Config.user)
@@ -340,6 +367,7 @@ static int select_server (Handle *handle, int limitUrlId, int serverCount) {
       continue;
     }
 
+    handle->acceptRanges = false;
     res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
       log_error(handle, res, "Cannot exec head request properly on `%s`", url);
@@ -351,13 +379,13 @@ static int select_server (Handle *handle, int limitUrlId, int serverCount) {
       continue;
     }
 
-    res = curl_easy_getinfo(handle->curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD, &deviceSize);
+    res = curl_easy_getinfo(handle->curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &deviceSize);
     if (res != CURLE_OK) {
       log_error(handle, res, "Failed to get size of backing device on `%s`", url);
       continue;
     }
 
-    if (deviceSize > 0.0) {
+    if (deviceSize > 0) {
       // Success. \o/
       break;
     }
@@ -369,27 +397,27 @@ static int select_server (Handle *handle, int limitUrlId, int serverCount) {
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, NULL));
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_HEADERDATA, NULL));
 
-  if (deviceSize <= 0.0) {
-    handle->currentUrlId = -1;
-    return -1;
-  }
+  if (deviceSize <= 0)
+    goto err;
 
   // Configure cURL to read/write.
+  CHECK_CURL(curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, TIMEOUT_REQUEST));
+
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_READFUNCTION, curl_cb_read));
   CHECK_CURL(curl_easy_setopt(curl, CURLOPT_READDATA, handle));
 
-  if (!handle->readonly) {
-    CHECK_CURL(curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_cb_write));
-    CHECK_CURL(curl_easy_setopt(curl, CURLOPT_WRITEDATA, handle));
-  }
+  CHECK_CURL(curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_cb_write));
+  CHECK_CURL(curl_easy_setopt(curl, CURLOPT_WRITEDATA, handle));
 
   nbdkit_debug("Selected server: `%s`.", Config.urlArray[handle->currentUrlId]);
   handle->deviceSize = (size_t)deviceSize;
-  nbdkit_debug("Device size: %" PRIi64 ".", handle->deviceSize);
+  nbdkit_debug("Device size: %zu.", handle->deviceSize);
 
   return 0;
 
 err:
+  // Force a new selection on the next request: the cURL handle may be partially configured at this point.
+  handle->currentUrlId = -1;
   return -1;
 }
 
@@ -437,7 +465,7 @@ static int cb_config (const char *key, const char *value) {
       return -1;
   } else if (!strcmp(key, "device-size")) {
     bool ok;
-    Config.deviceSize = toSize(value, &ok);
+    Config.deviceSize = to_size(value, &ok);
     if (!ok) {
       nbdkit_error("Invalid device size!");
       return -1;
@@ -478,7 +506,7 @@ static int cb_config_complete () {
       if (++Config.urlArraySize > Config.urlArrayCapacity) {
         Config.urlArrayCapacity <<= 1;
 
-        void *ptr = realloc(Config.urlArray, Config.urlArrayCapacity);
+        void *ptr = realloc(Config.urlArray, sizeof *Config.urlArray * Config.urlArrayCapacity);
         if (!ptr) {
           nbdkit_error("Failed to reallocate URL array.");
           return -1;
@@ -500,14 +528,24 @@ static int cb_config_complete () {
   return 0;
 }
 
+static void cb_close (void *userData);
+
 static void *cb_open (int readonly) {
+  UNUSED(readonly);
+
   Handle *handle = calloc(1, sizeof *handle);
   if (!handle) {
     nbdkit_error("Failed to allocate handle.");
     return NULL;
   }
 
-  handle->readonly = readonly;
+  handle->headers = curl_slist_append(NULL, NO_EXPECT_HEADER);
+  if (!handle->headers) {
+    nbdkit_error("Failed to allocate curl header list.");
+    free(handle);
+    return NULL;
+  }
+
   handle->currentUrlId = -1;
 
   // In any case we must return a valid handle. So if we can't reach a server and if the device size
@@ -517,7 +555,7 @@ static void *cb_open (int readonly) {
 
     if (!Config.hasDeviceSize) {
       nbdkit_error("No device size, exit!");
-      free(handle);
+      cb_close(handle);
       return NULL;
     }
   }
@@ -532,6 +570,7 @@ static void cb_close (void *userData) {
   Handle *handle = userData;
   if (handle) {
     curl_easy_cleanup(handle->curl);
+    curl_slist_free_all(handle->headers);
     free(handle);
   }
 }
@@ -572,10 +611,14 @@ static int cb_pread (void *userData, void *buf, uint32_t count, uint64_t offset,
   for (int retryCount = BROKEN_PIPE_RETRY_COUNT; ; ) {
     handle->writeBuf = buf;
     handle->writeCount = count;
+    handle->rangeIgnored = false;
 
     ReqError result;
     exec_op(handle, CURLOPT_HTTPGET, count, offset, result);
-    if (result == ReqErrorOk) {
+    if (handle->rangeIgnored) {
+      nbdkit_error("Server `%s` ignored the range of a read request.", Config.urlArray[handle->currentUrlId]);
+      result = ReqErrorRange;
+    } else if (result == ReqErrorOk) {
       if (!handle->writeCount)
         goto success;
       nbdkit_error("Incomplete read request, retry on another server.");
@@ -625,6 +668,9 @@ static int cb_pwrite (void *userData, const void *buf, uint32_t count, uint64_t 
     handle->readBuf = buf;
     handle->readCount = count;
     handle->uploading = true;
+
+    // With a known size, libcurl sends `Content-Length` instead of a chunked body.
+    CHECK_CURL(curl_easy_setopt(handle->curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t)count));
 
     ReqError result;
     exec_op(handle, CURLOPT_UPLOAD, count, offset, result);
@@ -691,7 +737,9 @@ static struct nbdkit_plugin plugin = {
   .flush             = NULL,
   .trim              = NULL,
   .zero              = NULL,
-  .errno_is_preserved = 1
+  // Don't use the current errno (left by libc or cURL).
+  // By default nbdkit reports errors as EIO.
+  .errno_is_preserved = 0
 };
 
 #undef cb_config_help
