@@ -3,26 +3,31 @@ import random
 
 import pytest
 
+from http_nbd_transfer.typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tests.conftest import Device
+
 # ==============================================================================
 
-@pytest.mark.usefixtures('random_backing_file')
+@pytest.mark.usefixtures("random_backing_file")
 class TestRequests:
-    def test_read_all(self, random_backing_file):
+    def test_read_all(self, random_backing_file: "Device") -> None:
         random_backing_file.check_read_all()
 
-    def test_simple_write(self, random_backing_file):
+    def test_simple_write(self, random_backing_file: "Device") -> None:
         chunk_size = 512
-        random_backing_file.check_write(b'X' * chunk_size, 0)
+        random_backing_file.check_write(b"X" * chunk_size, 0)
         random_backing_file.check_read(chunk_size, 0)
 
-    def test_unaligned_read(self, random_backing_file):
+    def test_unaligned_read(self, random_backing_file: "Device") -> None:
         random_backing_file.check_read(2518684, 4155625)
 
-    def test_unaligned_write(self, random_backing_file):
+    def test_unaligned_write(self, random_backing_file: "Device") -> None:
         random_backing_file.check_write(os.urandom(3732428), 9458932)
         random_backing_file.check_read(3732428, 9458932)
 
-    def test_write_all(self, random_backing_file):
+    def test_write_all(self, random_backing_file: "Device") -> None:
         i = 0
         chunk_size = 4096 * 1024
         while i < random_backing_file.capacity:
@@ -31,12 +36,12 @@ class TestRequests:
             i += chunk_size
         random_backing_file.check_read_all()
 
-    def test_random_write(self, random_backing_file):
+    def test_random_write(self, random_backing_file: "Device") -> None:
         chunk_size = 512 * 1024
 
         i = 0
         while i < 10:
-            print('Loop {}'.format(i))
+            print(f"Loop {i}")
             offset = random.randint(0, random_backing_file.capacity)
             offset = (offset + (chunk_size - 1)) & ~(chunk_size - 1)
 
@@ -46,20 +51,20 @@ class TestRequests:
 
             i += 1
 
-        print('Check final buffer.')
+        print("Check final buffer.")
         random_backing_file.check_read_all()
 
-    def test_random_unaligned_write(self, random_backing_file):
+    def test_random_unaligned_write(self, random_backing_file: "Device") -> None:
         base_chunk_size = 512 * 1024
         diff_percent = 0.25
 
-        diff = base_chunk_size * diff_percent
+        diff = int(base_chunk_size * diff_percent)
         min_chunk_size = base_chunk_size - diff
         max_chunk_size = base_chunk_size + diff
 
         i = 0
         while i < 10:
-            print('Loop {}'.format(i))
+            print(f"Loop {i}")
             chunk_size = random.randint(min_chunk_size, max_chunk_size)
             offset = random.randint(0, random_backing_file.capacity)
 
@@ -69,5 +74,5 @@ class TestRequests:
 
             i += 1
 
-        print('Check final buffer.')
+        print("Check final buffer.")
         random_backing_file.check_read_all()

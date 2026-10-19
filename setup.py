@@ -18,15 +18,7 @@
 
 from setuptools import setup
 
-setup(
-    name="http-nbd-transfer",
-    version="1.8.0",
-    description="Set of tools to transfer NBD requests to an HTTP server",
-    author="Ronan Abhamon <ronan.abhamon@vates.tech>",
-    author_email="ronan.abhamon@vates.tech",
-    url="https://vates.tech",
-    license="GPLv3",
-    python_requires=">=3.6",
-    py_modules=["http_disk_server", "nbd_http_server"],
-    scripts=["scripts/http-disk-server", "scripts/nbd-http-server"]
-)
+# ==============================================================================
+
+if __name__ == "__main__":
+    setup()

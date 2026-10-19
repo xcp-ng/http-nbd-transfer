@@ -1,6 +1,9 @@
+from collections import namedtuple
+import contextlib
 import ctypes
 import io
 import os
+from pathlib import Path
 import random
 import re
 import shutil
@@ -8,18 +11,23 @@ import signal
 import socket
 import string
 import subprocess
-import sys
 import tempfile
-from collections import namedtuple
-from pathlib import Path
+from types import FrameType
 
 import pytest
 
+from http_nbd_transfer.platform import EXEC_PATH_DMESG
+from http_nbd_transfer.process import run_internal_command
 from tests import buffer
+
+from http_nbd_transfer.typing import Callable, NoReturn, Optional, override, Tuple, TypeVar, Union
+
+T = TypeVar("T")
 
 # ==============================================================================
 
 REG_NBD_PATH = re.compile("NBD `(/dev/nbd[0-9]+)` is now attached.$")
+REG_HTTP_SERVER_READY = re.compile("Server ready!$")
 
 SECTOR_SIZE = 512
 SECTOR_MASK = SECTOR_SIZE - 1
@@ -30,17 +38,17 @@ RANDOM_BUFFER_SIZE_KIB = 16 * 1024
 # Helpers.
 # ==============================================================================
 
-def generate_random_string(length):
-    return ''.join(random.choice(string.ascii_letters) for i in range(length))
+def generate_random_string(length: int) -> str:
+    return "".join(random.choice(string.ascii_letters) for i in range(length))
 
 # ------------------------------------------------------------------------------
 
-class TimeoutException(Exception):
+class TimeoutCallError(Exception):
     pass
 
-def timeout_call(timeoutseconds, function, *arguments):
-    def handler(signum, frame):
-        raise TimeoutException()
+def timeout_call(timeoutseconds: int, function: Callable[..., T], *arguments: object) -> T:
+    def handler(_signum: int, _frame: Optional[FrameType]) -> NoReturn:
+        raise TimeoutCallError()
     signal.signal(signal.SIGALRM, handler)
     signal.alarm(timeoutseconds)
     try:
@@ -50,24 +58,22 @@ def timeout_call(timeoutseconds, function, *arguments):
 
 # ------------------------------------------------------------------------------
 
-def call_ignore(fun):
-    try:
+def call_ignore(fun: Callable[[], object]) -> None:
+    with contextlib.suppress(Exception):
         fun()
-    except Exception:
-        pass
 
 # ------------------------------------------------------------------------------
 
-def generate_random_buffer(size_kib):
+def generate_random_buffer(size_kib: int) -> bytearray:
     assert isinstance(size_kib, int)
 
     random_buffer = bytearray()
-    for i in range(size_kib):
+    for _i in range(size_kib):
         chunk = os.urandom(1024)
         random_buffer.extend(chunk)
     return random_buffer
 
-def generate_aligned_buffer(size, alignment):
+def generate_aligned_buffer(size: int, alignment: int) -> "ctypes.Array[ctypes.c_char]":
     assert isinstance(size, int)
     assert isinstance(alignment, int)
 
@@ -83,76 +89,78 @@ def generate_aligned_buffer(size, alignment):
     assert ctypes.addressof(aligned_buffer) % alignment == 0
     return aligned_buffer
 
-def generate_aligned_random_buffer(size_kib, alignment_b):
+def generate_aligned_random_buffer(size_kib: int, alignment_b: int) -> "ctypes.Array[ctypes.c_char]":
     random_buffer = generate_aligned_buffer(size_kib * 1024, alignment_b)
     for i in range(size_kib):
-        random_buffer[i * 1024:(i + 1) * 1024] = os.urandom(1024)
+        buffer(random_buffer, i * 1024, 1024)[:] = os.urandom(1024)
     return random_buffer
 
 # ------------------------------------------------------------------------------
 
-def get_dmesg_output():
-    p = subprocess.Popen(
-        ['dmesg'],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        close_fds=True,
-        universal_newlines=True
-    )
-
-    limit = 30
-    lines = []
-    while True:
-        line = p.stdout.readline()
-        if not line:
-            break
-        if len(lines) == limit:
-            lines.pop(0)
-        lines.append(line)
-
-    return '\n'.join(lines)
+def get_dmesg_output() -> str:
+    stdout = run_internal_command([EXEC_PATH_DMESG])
+    return "".join(stdout.splitlines(keepends=True)[-30:])
 
 # ------------------------------------------------------------------------------
 
-def kill_server(server):
+def kill_server(server: Optional[subprocess.Popen]) -> None:
     if server:
         try:
             os.killpg(os.getpgid(server.pid), signal.SIGTERM)
             os.waitpid(server.pid, 0)
         except Exception as e:
-            print('Failed to kill: `{}`.'.format(e))
+            print(f"Failed to kill: `{e}`.")
 
 # ------------------------------------------------------------------------------
 
-def start_http_server(env, backing_path):
+def start_http_server(env: "Env", backing_path: Path) -> subprocess.Popen:
     arguments = [
-        env.bin_dir / 'http-disk-server',
-        '--disk',
+        env.bin_dir / "http-disk-server",
+        "--disk",
         backing_path,
-        '--port',
+        "--port",
         env.http_port
     ]
 
-    return subprocess.Popen(
+    http_server = subprocess.Popen(
         arguments,
-        stdout=sys.stdout,
+        stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        preexec_fn=os.setsid,
-        env=dict(os.environ, PYTHONUNBUFFERED='1')
+        start_new_session=True,
+        universal_newlines=True,
+        env=dict(os.environ, PYTHONUNBUFFERED="1")
     )
+    http_server_stdout = http_server.stdout
+    assert http_server_stdout is not None
+
+    # The NBD server doesn't wait for the HTTP server at startup, we must do this on our side.
+    try:
+        def is_ready() -> bool:
+            while http_server.poll() is None:
+                line = http_server_stdout.readline()
+                if REG_HTTP_SERVER_READY.search(line):
+                    return True
+            return False
+        if not timeout_call(10, is_ready):
+            raise Exception("HTTP server exited before being ready!")
+    except Exception:
+        kill_server(http_server)
+        raise
+
+    return http_server
 
 # ------------------------------------------------------------------------------
 
-def start_nbd_server(env, volume_name, device_size):
+def start_nbd_server(env: "Env", volume_name: str, device_size: int) -> Tuple[subprocess.Popen, str]:
     arguments = [
-        env.bin_dir / 'nbd-http-server',
-        '--socket-path',
-        env.work_dir / (volume_name + '.socket'),
-        '--nbd-name',
+        env.bin_dir / "nbd-http-server",
+        "--socket-path",
+        env.work_dir / (volume_name + ".socket"),
+        "--nbd-name",
         volume_name,
-        '--urls',
-        'http://{}:{}'.format(socket.gethostname(), env.http_port),
-        '--device-size',
+        "--urls",
+        f"http://{socket.gethostname()}:{env.http_port}",
+        "--device-size",
         str(device_size)
     ]
 
@@ -160,164 +168,171 @@ def start_nbd_server(env, volume_name, device_size):
         arguments,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        preexec_fn=os.setsid,
+        start_new_session=True,
         universal_newlines=True,
-        env=dict(os.environ, PYTHONUNBUFFERED='1')
+        env=dict(os.environ, PYTHONUNBUFFERED="1")
     )
+    nbd_server_stdout = nbd_server.stdout
+    assert nbd_server_stdout is not None
 
     try:
-        def get_nbd_path():
+        def get_nbd_path() -> Optional[str]:
             while nbd_server.poll() is None:
-                line = nbd_server.stdout.readline()
+                line = nbd_server_stdout.readline()
                 match = REG_NBD_PATH.search(line)
                 if match:
                     return match.group(1)
+            return None
         nbd_path = timeout_call(30, get_nbd_path)
         if nbd_path is None:
-            raise Exception('NBD path is empty!')
+            raise Exception("NBD path is empty!")
     except Exception:
         kill_server(nbd_server)
-        print('Failed to get NBD path (dmesg): {}'.format(get_dmesg_output()))
+        print(f"Failed to get NBD path (dmesg): {get_dmesg_output()}")
         raise
 
-    print('Used NBD path: `{}`.'.format(nbd_path))
+    print(f"Used NBD path: `{nbd_path}`.")
     return (nbd_server, nbd_path)
 
 # ==============================================================================
 # Fixtures.
 # ==============================================================================
 
-Env = namedtuple('Env', ['bin_dir', 'http_port', 'work_dir'])
+Env = namedtuple("Env", ["bin_dir", "http_port", "work_dir"])
 
-def pytest_addoption(parser):
+def pytest_addoption(parser: "pytest.Parser") -> None:
     parser.addoption(
-        '--bin-dir',
+        "--bin-dir",
         default=None,
         help=(
-            'directory of http-disk-server and nbd-http-server '
-            '(default: `bin_dir` of pytest.ini)'
+            "directory of http-disk-server and nbd-http-server "
+            "(default: `bin_dir` of pytest.ini)"
         )
     )
     parser.addoption(
-        '--http-port',
+        "--http-port",
         default=None,
-        help='port of the HTTP server (default: `http_port` of pytest.ini)'
+        help="port of the HTTP server (default: `http_port` of pytest.ini)"
     )
     parser.addini(
-        'bin_dir',
-        'directory of http-disk-server and nbd-http-server (absolute, or relative to the rootdir)',
+        "bin_dir",
+        "directory of http-disk-server and nbd-http-server (absolute, or relative to the rootdir)",
     )
     parser.addini(
-        'http_port',
-        'port of the HTTP server',
-        default='8080'
+        "http_port",
+        "port of the HTTP server",
+        default="8080"
     )
 
-def get_bin_dir(config):
-    bin_dir = config.getoption('--bin-dir')
+def get_bin_dir(config: "pytest.Config") -> Path:
+    bin_dir = config.getoption("--bin-dir")
     if bin_dir:
         return Path(bin_dir)
 
-    bin_dir = config.getini('bin_dir')
+    bin_dir = config.getini("bin_dir")
     if not bin_dir:
-        raise pytest.UsageError('`bin_dir` is not set in pytest.ini, use --bin-dir')
+        raise pytest.UsageError("`bin_dir` is not set in pytest.ini, use --bin-dir")
 
     # The rootdir is the directory of pytest.ini. An absolute `bin_dir` is kept as is.
-    return Path(str(config.rootdir)) / bin_dir
+    # TODO(XCPNG-3919): Workaround for old pytest. Remove the `type` directive later.
+    return Path(str(config.rootdir)) / bin_dir  # type: ignore[attr-defined]
 
-@pytest.fixture(scope='session')
-def env(request):
+@pytest.fixture(scope="session")
+def env(request: "pytest.FixtureRequest") -> Env:
     # Private directory for the sockets and disk images, nothing is written next to the tests.
-    work_dir = Path(tempfile.mkdtemp(prefix='http-nbd-transfer-'))
+    work_dir = Path(tempfile.mkdtemp(prefix="http-nbd-transfer-"))
     request.addfinalizer(lambda: shutil.rmtree(work_dir, ignore_errors=True))
 
     return Env(
         bin_dir=get_bin_dir(request.config),
-        http_port=request.config.getoption('--http-port') or request.config.getini('http_port'),
+        http_port=request.config.getoption("--http-port") or request.config.getini("http_port"),
         work_dir=work_dir
     )
 
 # ------------------------------------------------------------------------------
 
 class Device:
-    __slots__ = ('_buffer', '_read_buffer', '_fd', '_capacity')
+    __slots__ = ("_buffer", "_read_buffer", "_fd", "_capacity")
 
-    def __init__(self, buffer, fd):
+    def __init__(self, buffer: bytearray, fd: int) -> None:
         self._buffer = buffer
         self._read_buffer = generate_aligned_random_buffer(len(buffer) // 1024, SECTOR_SIZE)
         self._fd = fd
         self._capacity = len(self._buffer)
 
     @property
-    def capacity(self):
+    def capacity(self) -> int:
         return self._capacity
 
-    def check_read(self, count, offset):
+    def check_read(self, count: int, offset: int) -> None:
         offset = self._seek(offset)
         max_count = self._capacity - offset
         if count > max_count:
             count = max_count
-        print('Device: Read {}B at {}.'.format(count, offset))
+        print(f"Device: Read {count}B at {offset}.")
         expected_chunk = buffer(self._buffer, offset, count)
         self._check_read_unsafe(count, expected_chunk)
 
-    def check_write(self, chunk, offset):
+    def check_write(self, chunk: Union[bytes, memoryview], offset: int) -> None:
         offset = self._seek(offset)
         count = len(chunk)
         max_count = self._capacity - offset
         if count > max_count:
             count = max_count
             chunk = buffer(chunk, 0, count)
-        print('Device: Write {}B at {}.'.format(count, offset))
+        print(f"Device: Write {count}B at {offset}.")
         self._buffer[offset:offset + count] = chunk
         os.write(self._fd, chunk)
 
-    def check_read_all(self):
+    def check_read_all(self) -> None:
         self.check_read(len(self._buffer), 0)
 
-    def _check_read_unsafe(self, count, expected_chunk):
+    def _check_read_unsafe(self, count: int, expected_chunk: memoryview) -> None:
         buffer_view = self._get_read_buffer_view(count)
         read_count = self._read(self._fd, buffer_view)
         assert buffer(buffer_view, 0, read_count) == expected_chunk
 
-    def _seek(self, offset):
+    def _seek(self, offset: int) -> int:
         if offset > self._capacity:
             offset = self._capacity
         self._seek_unsafe(offset)
         return offset
 
-    def _seek_unsafe(self, offset):
+    def _seek_unsafe(self, offset: int) -> None:
         os.lseek(self._fd, offset, os.SEEK_SET)
 
-    def _get_read_buffer_view(self, count):
+    def _get_read_buffer_view(self, count: int) -> "ctypes.Array[ctypes.c_char]":
         return (ctypes.c_char * count).from_buffer(self._read_buffer)
 
     @staticmethod
-    def _read(fd, buffer):
+    def _read(fd: int, buffer: "ctypes.Array[ctypes.c_char]") -> int:
         with io.FileIO(fd, closefd=False) as fio:
             return fio.readinto(buffer)
 
 class MirrorDevice(Device):
-    __slots__ = ('_fd_mirror', )
+    __slots__ = ("_fd_mirror", )
 
-    def __init__(self, device, fd_mirror):
-        super().__init__(device._buffer, device._fd)
+    def __init__(self, device: Device, fd_mirror: int) -> None:
+        super().__init__(device._buffer, device._fd)  # noqa: SLF001
         self._fd_mirror = fd_mirror
 
     # Because O_DIRECT is used in mirroring mode, we must ensure buffer addrs,
     # sizes and offsets are correctly aligned.
-    def check_read(self, count, offset):
+    @override
+    def check_read(self, count: int, offset: int) -> None:
         assert count & SECTOR_MASK == 0
         assert offset & SECTOR_MASK == 0
         super().check_read(count, offset)
 
-    def check_write(self, chunk, offset):
+    @override
+    def check_write(self, chunk: Union[bytes, memoryview], offset: int) -> None:
         # Note: Assume chunk addr is correctly aligned.
         assert len(chunk) & SECTOR_MASK == 0
         assert offset & SECTOR_MASK == 0
         super().check_write(chunk, offset)
 
-    def _check_read_unsafe(self, count, expected_chunk):
+    @override
+    def _check_read_unsafe(self, count: int, expected_chunk: memoryview) -> None:
         assert count & SECTOR_MASK == 0
         buffer_view = self._get_read_buffer_view(count)
         assert ctypes.addressof(buffer_view) & SECTOR_MASK == 0
@@ -328,33 +343,34 @@ class MirrorDevice(Device):
         read_count = self._read(self._fd_mirror, buffer_view)
         assert buffer(buffer_view, 0, read_count) == expected_chunk
 
-    def _seek_unsafe(self, offset):
+    @override
+    def _seek_unsafe(self, offset: int) -> None:
         os.lseek(self._fd, offset, os.SEEK_SET)
         os.lseek(self._fd_mirror, offset, os.SEEK_SET)
 
 # ------------------------------------------------------------------------------
 
-def create_random_backing_file(request, env, open_flags):
+def create_random_backing_file(request: "pytest.FixtureRequest", env: Env, open_flags: int) -> Device:
     random_buffer = generate_random_buffer(size_kib=RANDOM_BUFFER_SIZE_KIB)
 
     http_server = None
     nbd_server = None
     fd = None
-    backing_path = env.work_dir / ('image-' + generate_random_string(32) + '.bin')
+    backing_path = env.work_dir / ("image-" + generate_random_string(32) + ".bin")
 
-    def clean():
+    def clean() -> None:
         kill_server(nbd_server)
         kill_server(http_server)
 
-        call_ignore(lambda: os.close(fd))
-        call_ignore(lambda: backing_path.unlink())
+        if fd is not None:
+            call_ignore(lambda: os.close(fd))
+        call_ignore(backing_path.unlink)
 
     try:
-        with open(backing_path, 'wb') as f:
-            f.write(random_buffer)
+        backing_path.write_bytes(random_buffer)
 
         http_server = start_http_server(env, backing_path)
-        (nbd_server, nbd_path) = start_nbd_server(env, 'disk-test', RANDOM_BUFFER_SIZE_KIB * 1024)
+        (nbd_server, nbd_path) = start_nbd_server(env, "disk-test", RANDOM_BUFFER_SIZE_KIB * 1024)
 
         fd = os.open(nbd_path, open_flags)
     except Exception:
@@ -367,23 +383,25 @@ def create_random_backing_file(request, env, open_flags):
 
 # ------------------------------------------------------------------------------
 
-@pytest.fixture(scope='class')
-def random_backing_file(request, env):
+@pytest.fixture(scope="class")
+def random_backing_file(request: "pytest.FixtureRequest", env: Env) -> Device:
     return create_random_backing_file(request, env, os.O_RDWR)
 
-@pytest.fixture(scope='class')
-def random_backing_file_with_o_direct(request, env):
+@pytest.fixture(scope="class")
+def random_backing_file_with_o_direct(request: "pytest.FixtureRequest", env: Env) -> Device:
     return create_random_backing_file(request, env, os.O_RDWR | os.O_DIRECT)
 
-@pytest.fixture(scope='class')
-def backing_file_mirror(request, env, random_backing_file_with_o_direct):
+@pytest.fixture(scope="class")
+def backing_file_mirror(
+    request: "pytest.FixtureRequest", env: Env, random_backing_file_with_o_direct: Device
+) -> "MirrorDevice":
     nbd_server = None
 
-    def clean():
+    def clean() -> None:
         kill_server(nbd_server)
 
     try:
-        (nbd_server, nbd_path) = start_nbd_server(env, 'disk-test-mirror', RANDOM_BUFFER_SIZE_KIB * 1024)
+        (nbd_server, nbd_path) = start_nbd_server(env, "disk-test-mirror", RANDOM_BUFFER_SIZE_KIB * 1024)
         fd = os.open(nbd_path, os.O_RDWR | os.O_DIRECT)
     except Exception:
         clean()
@@ -393,6 +411,6 @@ def backing_file_mirror(request, env, random_backing_file_with_o_direct):
     request.addfinalizer(clean)
     return device
 
-@pytest.fixture(scope='class')
-def aligned_buffer():
+@pytest.fixture(scope="class")
+def aligned_buffer() -> "ctypes.Array[ctypes.c_char]":
     return generate_aligned_buffer(RANDOM_BUFFER_SIZE_KIB * 1024, SECTOR_SIZE)
