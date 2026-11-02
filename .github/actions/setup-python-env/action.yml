@@ -1,0 +1,20 @@
+name: Setup Python env
+description: Setup Python and dependencies
+inputs:
+  python-version:
+    description: Python version to use
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Set up uv and Python
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        cache-dependency-glob: uv.lock
+        version: "0.10.11"
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install dependencies
+      shell: bash
+      run: uv sync --all-extras --dev

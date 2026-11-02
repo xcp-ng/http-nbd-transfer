@@ -1,0 +1,144 @@
+[project]
+name = "http-nbd-transfer"
+dynamic = [
+    "authors",
+    "description",
+    "license",
+    "urls",
+    "version"
+]
+requires-python = ">=3.7" # TODO(XCPNG-3919): Change it for modern python.
+
+[build-system]
+requires = ["setuptools>=40"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.4.1",
+    "pyrefly>=0.14.0",
+    "pytest>=7.0",
+    "pytest-cov>=3.0",
+    "ruff>=0.15.6",
+]
+
+[tool.mypy]
+python_version = "3.14"
+mypy_path = ["src"]
+files = [
+    "src",
+    "tests"
+]
+
+disallow_untyped_defs = true
+enable_error_code = ["explicit-override"]
+explicit_package_bases = true
+ignore_missing_imports = false
+implicit_optional = false
+
+[[tool.mypy.overrides]]
+module = "setuptools.*"
+ignore_missing_imports = true
+
+[tool.pyrefly]
+python-version = "3.14"
+search-path = ["."]
+project-includes = [
+    "src",
+    "tests"
+]
+
+[tool.ruff]
+include = [
+    "src/**/*.py",
+    "scripts/*",
+    "tests/**/*.py"
+]
+line-length = 120
+
+[tool.ruff.lint]
+ignore = [
+    "B019",   # flake8-bugbear: cached-instance-method
+    "EM101",  # flake8-errmsg: raw-string-in-exception
+    "EM102",  # flake8-errmsg: f-string-in-exception
+    "S101",   # flake8-bandit: assert
+    "S603",   # flake8-bandit: subprocess-without-shell-equals-true
+    "TD003",  # flake8-todos: missing-todo-link
+    "UP006",  # pyupgrade: non-pep585-annotation
+    "UP007",  # pyupgrade: non-pep604-annotation-union
+    "UP045",  # pyupgrade: non-pep604-annotation-optional
+]
+select = [
+    "A",      # flake8-builtins
+    "ANN",    # flake8-annotations
+    "ARG",    # flake8-unused-arguments
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "C90",    # mccabe
+    "DTZ",    # flake8-datetimez
+    "E",      # pycodestyle: error
+    "EM",     # flake8-errmsg
+    "ERA",    # eradicate
+    "EXE",    # flake8-executable
+    "F",      # Pyflakes
+    "FBT",    # flake8-boolean-trap
+    "FLY",    # flynt
+    "FURB",   # refurb
+    "G",      # flake8-logging-format
+    "I",      # isort
+    "ICN",    # flake8-import-conventions
+    "INT",    # flake8-gettext
+    "LOG",    # flake8-logging
+    "N",      # pep8-naming
+    "PERF",   # perflint
+    "PIE",    # flake8-pie
+    "PLW",    # pylint: warning
+    "PTH",    # flake8-use-pathlib
+    "Q",      # flake8-quotes
+    "RET",    # flake8-return
+    "RUF013", # ruff: implicit-optional
+    "RUF059", # ruff: unused-unpacked-variable
+    "S",      # flake8-bandit
+    "SIM",    # flake8-simplify
+    "SLF",    # flake8-self
+    "T100",   # flake8-debugger
+    "T20",    # flake8-print
+    "TD",     # flake8-todos
+    "TID",    # flake8-tidy-imports
+    "UP",     # pyupgrade
+    "W",      # pycodestyle: warning
+]
+typing-modules = ["http_nbd_transfer.typing"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S311", # flake8-bandit: suspicious-non-cryptographic-random-usage
+    "T201", # flake8-print: print
+]
+
+[tool.ruff.lint.isort.sections]
+"typing" = ["http_nbd_transfer.typing"]
+
+[tool.ruff.lint.isort]
+case-sensitive = false
+combine-as-imports = true
+force-sort-within-sections = true
+known-first-party = ["http_nbd_transfer"]
+lines-after-imports = 1
+order-by-type = false
+section-order = [
+    "future",
+    "standard-library",
+    "third-party",
+    "first-party",
+    "local-folder",
+    "typing"
+]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+bin_dir = "tests/bin"
