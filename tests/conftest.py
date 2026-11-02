@@ -49,12 +49,13 @@ class TimeoutCallError(Exception):
 def timeout_call(timeoutseconds: int, function: Callable[..., T], *arguments: object) -> T:
     def handler(_signum: int, _frame: Optional[FrameType]) -> NoReturn:
         raise TimeoutCallError()
-    signal.signal(signal.SIGALRM, handler)
+    old_handler = signal.signal(signal.SIGALRM, handler)
     signal.alarm(timeoutseconds)
     try:
         return function(*arguments)
     finally:
         signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
 
 # ------------------------------------------------------------------------------
 
@@ -127,8 +128,7 @@ def start_http_server(env: "Env", backing_path: Path) -> subprocess.Popen:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         start_new_session=True,
-        universal_newlines=True,
-        env=dict(os.environ, PYTHONUNBUFFERED="1")
+        universal_newlines=True
     )
     http_server_stdout = http_server.stdout
     assert http_server_stdout is not None
@@ -169,8 +169,7 @@ def start_nbd_server(env: "Env", volume_name: str, device_size: int) -> Tuple[su
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         start_new_session=True,
-        universal_newlines=True,
-        env=dict(os.environ, PYTHONUNBUFFERED="1")
+        universal_newlines=True
     )
     nbd_server_stdout = nbd_server.stdout
     assert nbd_server_stdout is not None
@@ -282,7 +281,9 @@ class Device:
             chunk = buffer(chunk, 0, count)
         print(f"Device: Write {count}B at {offset}.")
         self._buffer[offset:offset + count] = chunk
-        os.write(self._fd, chunk)
+        view = memoryview(chunk).cast("B")[:count]
+        while view:
+            view = view[os.write(self._fd, view):]
 
     def check_read_all(self) -> None:
         self.check_read(len(self._buffer), 0)
@@ -306,8 +307,15 @@ class Device:
 
     @staticmethod
     def _read(fd: int, buffer: "ctypes.Array[ctypes.c_char]") -> int:
+        view = memoryview(buffer).cast("B")
+        total = 0
         with io.FileIO(fd, closefd=False) as fio:
-            return fio.readinto(buffer)
+            while total < len(view):
+                count = fio.readinto(view[total:])
+                if not count:
+                    break
+                total += count
+        return total
 
 class MirrorDevice(Device):
     __slots__ = ("_fd_mirror", )

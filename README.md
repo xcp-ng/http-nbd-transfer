@@ -31,7 +31,7 @@ Execute on the first host:
 And on the secondary:
 ```
 # Start a NBD server
-> nbd-http-server --socket-path ./socket --nbd-name heartbeat --urls "http://totor-a:8000,http://totor-b:8000"
+> nbd-http-server --socket-path ./socket --nbd-name heartbeat --urls "http://totor-a:8000,http://totor-b:8000" -v
 nbdkit: debug: TLS disabled: could not load TLS certificates
 nbdkit: debug: registering plugin /root/http-nbd-transfer/multi-http-plugin.so
 nbdkit: debug: registered plugin /root/http-nbd-transfer/multi-http-plugin.so (name multihttp)
